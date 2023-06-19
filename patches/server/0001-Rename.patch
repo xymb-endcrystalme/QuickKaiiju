@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: "Sofiane H. Djerbi" <46628754+kugge@users.noreply.github.com>
+Date: Mon, 19 Jun 2023 19:00:58 +0300
+Subject: [PATCH] Rename
+
+
+diff --git a/build.gradle.kts b/build.gradle.kts
+index d24f5fdc6a8c34774933a5cd8bfed8571299bd35..59622ca27949de85a09b66421316600c8c33e63f 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -8,7 +8,7 @@ plugins {
+ 
+ dependencies {
+     // Folia start
+-    implementation(project(":kaiiju-api")) // Kaiiju
++    implementation(project(":zilla-api")) // Kaiiju // Zilla
+     implementation("io.papermc.paper:paper-mojangapi:1.19.3-R0.1-SNAPSHOT") {
+         exclude("io.papermc.paper", "paper-api")
+     }
