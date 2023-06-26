@@ -53,23 +53,23 @@ subprojects {
 }
 
 paperweight {
-    serverProject.set(project(":zilla-server"))
+    serverProject.set(project(":QuickKaiiju-Server"))
 
     remapRepo.set(paperMavenPublicUrl)
     decompileRepo.set(paperMavenPublicUrl)
 
     useStandardUpstream("Kaiiju") {
-        url.set(github("KaiijuMC", "Kaiiju"))
+        url.set(github("Endcrystal-me", "Kaiiju"))
         ref.set(providers.gradleProperty("kaiijuRef"))
         
         withStandardPatcher {
             baseName("Kaiiju")
 
             apiPatchDir.set(layout.projectDirectory.dir("patches/api"))
-            apiOutputDir.set(layout.projectDirectory.dir("zilla-api"))
+            apiOutputDir.set(layout.projectDirectory.dir("QuickKaiiju-API"))
 
             serverPatchDir.set(layout.projectDirectory.dir("patches/server"))
-            serverOutputDir.set(layout.projectDirectory.dir("zilla-server"))
+            serverOutputDir.set(layout.projectDirectory.dir("QuickKaiiju-Server"))
         }
     }
 }

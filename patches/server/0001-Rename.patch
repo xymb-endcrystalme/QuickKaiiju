@@ -5,7 +5,7 @@ Subject: [PATCH] Rename
 
 
 diff --git a/build.gradle.kts b/build.gradle.kts
-index d24f5fdc6a8c34774933a5cd8bfed8571299bd35..59622ca27949de85a09b66421316600c8c33e63f 100644
+index d24f5fdc6a8c34774933a5cd8bfed8571299bd35..65b20a51327f2f7103e4ec23de2f04f3edf16c20 100644
 --- a/build.gradle.kts
 +++ b/build.gradle.kts
 @@ -8,7 +8,7 @@ plugins {
@@ -13,7 +13,20 @@ index d24f5fdc6a8c34774933a5cd8bfed8571299bd35..59622ca27949de85a09b66421316600c
  dependencies {
      // Folia start
 -    implementation(project(":kaiiju-api")) // Kaiiju
-+    implementation(project(":zilla-api")) // Kaiiju // Zilla
++    implementation(project(":QuickKaiiju-API")) // Kaiiju // QuickKaiiju
      implementation("io.papermc.paper:paper-mojangapi:1.19.3-R0.1-SNAPSHOT") {
          exclude("io.papermc.paper", "paper-api")
      }
+diff --git a/src/main/java/org/bukkit/craftbukkit/CraftServer.java b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+index 714db83db78d5bd66d8353bf9b8c4a6b1734fce4..13ecba14634d5e667328ce4e46b15aa7f1555cfd 100644
+--- a/src/main/java/org/bukkit/craftbukkit/CraftServer.java
++++ b/src/main/java/org/bukkit/craftbukkit/CraftServer.java
+@@ -261,7 +261,7 @@ import javax.annotation.Nullable; // Paper
+ import javax.annotation.Nonnull; // Paper
+ 
+ public final class CraftServer implements Server {
+-    private final String serverName = "Kaiiju"; // Kaiiju // Folia // Paper
++    private final String serverName = "QuickKaiiju"; // Kaiiju // Folia // Paper
+     private final String serverVersion;
+     private final String bukkitVersion = Versioning.getBukkitVersion();
+     private final Logger logger = Logger.getLogger("Minecraft");

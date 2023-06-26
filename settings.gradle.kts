@@ -5,6 +5,6 @@ pluginManagement {
     }
 }
 
-rootProject.name = "zilla"
+rootProject.name = "quickkaiiju"
 
-include("zilla-api", "zilla-server")
+include("QuickKaiiju-API", "QuickKaiiju-Server")
