@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Sun, 11 Jun 2023 12:15:39 +0200
+Subject: [PATCH] Optimization: Entity spawn throttling
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index 40894c0cb36bc7d5c02454824a3ff3389267fb30..034aa7ec3d9da90c0e739874be31f100c1055b78 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -154,6 +154,7 @@ public class KaiijuWorldConfig {
+     public boolean disableCreaturesSpawnEvents = false;
+     public boolean disableDolphinSwimToTreasure = false;
+     public int entityVisibilityLimitPerTick = 0;
++    public int spawnCreatureThrottlePlayers = 0;
+ 
+     private void optimizationSettings() {
+         shulkerBoxDropContentsWhenDestroyed = getBoolean("optimization.shulker-box-drop-contents-when-destroyed", shulkerBoxDropContentsWhenDestroyed);
+@@ -164,6 +165,7 @@ public class KaiijuWorldConfig {
+         disableCreaturesSpawnEvents = getBoolean("optimization.disable-creatures-spawn-events", disableCreaturesSpawnEvents);
+         disableDolphinSwimToTreasure = getBoolean("optimization.disable-dolphin-swim-to-treasure", disableDolphinSwimToTreasure);
+         entityVisibilityLimitPerTick = getInt("optimization.entity-visibility-limit-per-tick", entityVisibilityLimitPerTick);
++        spawnCreatureThrottlePlayers = getInt("optimization.spawn-creature-throttle-players", spawnCreatureThrottlePlayers);
+     }
+ 
+     public boolean fixVoidTrading = true;
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index e5dded0363b14608e834e63e678563b1423d66e7..ca2656e66d09b45d5c86b30ca83d93c8b24f2e38 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -458,7 +458,24 @@ public class ServerChunkCache extends ChunkSource {
+         this.clearCache();
+     }
+ 
++    // Kaiiju start
++    int getGameRulesThrottling = 0;
++    int randomTickingMemory = 0;
++    boolean doMobSpawningMemory = false;
++    int chunkTickThrottle = 0;
++    // Kaiiju end
++
+     private void tickChunks() {
++        // Kaiiju start
++        float chanceToTick = 1;
++        if (this.level.kaiijuConfig.tickChunksThrottlePlayers > 0 && this.level.getLocalPlayers().size() > 0)
++            chanceToTick = (float)this.level.kaiijuConfig.tickChunksThrottlePlayers / this.level.getLocalPlayers().size();
++        float chanceOfSpawningCreatures = 1;
++        if (level.kaiijuConfig.spawnCreatureThrottlePlayers > 0 && this.level.getLocalPlayers().size() > 0)
++            chanceOfSpawningCreatures = (float) level.kaiijuConfig.spawnCreatureThrottlePlayers / this.level.getLocalPlayers().size();
++        boolean spawnCreaturesThisTick = chanceOfSpawningCreatures >= java.util.concurrent.ThreadLocalRandom.current().nextFloat();
++        // Kaiiju end
++
+         io.papermc.paper.threadedregions.RegionizedWorldData regionizedWorldData = this.level.getCurrentWorldData(); // Folia - region threading
+         long i = this.level.getGameTime();
+         long j = 1; // Folia - region threading
+@@ -473,6 +490,7 @@ public class ServerChunkCache extends ChunkSource {
+             ChunkMap playerChunkMap = this.chunkMap;
+             // Folia - region threading
+ 
++            if (spawnCreaturesThisTick) { // Kaiiju
+             for (ServerPlayer player : this.level.getLocalPlayers()) { // Folia - region threading
+                 if (!player.affectsSpawning || player.isSpectator()) {
+                     regionizedWorldData.mobSpawnMap.remove(player); // Folia - region threading
+@@ -510,6 +528,7 @@ public class ServerChunkCache extends ChunkSource {
+                 player.lastEntitySpawnRadiusSquared = (double)((range << 4) * (range << 4)); // used in anyPlayerCloseEnoughForSpawning
+                 if (!this.level.kaiijuConfig.disableCreaturesSpawnEvents) player.playerNaturallySpawnedEvent = event; // Kaiiju
+             }
++            } // Kaiiju
+             // Paper end - optimize isOutisdeRange
+             LevelData worlddata = this.level.getLevelData();
+             ProfilerFiller gameprofilerfiller = this.level.getProfiler();
+@@ -518,17 +537,19 @@ public class ServerChunkCache extends ChunkSource {
+             int k = this.level.getGameRules().getInt(GameRules.RULE_RANDOMTICKING);
+             boolean flag1 = level.ticksPerSpawnCategory.getLong(org.bukkit.entity.SpawnCategory.ANIMAL) != 0L && this.level.getRedstoneGameTime() % level.ticksPerSpawnCategory.getLong(org.bukkit.entity.SpawnCategory.ANIMAL) == 0L; // CraftBukkit // Folia - region threading
+ 
+-            gameprofilerfiller.push("naturalSpawnCount");
+-            this.level.timings.countNaturalMobs.startTiming(); // Paper - timings
+-            int l = this.distanceManager.getNaturalSpawnChunkCount();
++            //gameprofilerfiller.push("naturalSpawnCount");
++            //this.level.timings.countNaturalMobs.startTiming(); // Paper - timings
++            NaturalSpawner.SpawnState spawnercreature_d = null; // Kaiiju
+             // Paper start - per player mob spawning
+-            NaturalSpawner.SpawnState spawnercreature_d; // moved down
++            if (spawnCreaturesThisTick) { // Kaiiju
++            int l = this.distanceManager.getNaturalSpawnChunkCount(); // Kaiiju
+             // Folia start - threaded regions - revert per-player mob caps
+             spawnercreature_d = this.spawnFriendlies || this.spawnEnemies ? NaturalSpawner.createState(l, regionizedWorldData.getLocalEntities(), this::getFullChunk, new LocalMobCapCalculator(this.chunkMap)) : null; // Folia - region threading
+             // Folia end - threaded regions - revert per-player mob caps
+-            this.level.timings.countNaturalMobs.stopTiming(); // Paper - timings
++            //this.level.timings.countNaturalMobs.stopTiming(); // Paper - timings
+ 
+             regionizedWorldData.lastSpawnState = spawnercreature_d; // Folia - region threading
++            } // Kaiiju
+             gameprofilerfiller.popPush("filteringLoadedChunks");
+             // Paper - moved down
+             this.level.timings.chunkTicks.startTiming(); // Paper
+@@ -555,10 +576,23 @@ public class ServerChunkCache extends ChunkSource {
+                 iterator1 = shuffled.iterator();
+             }
+ 
++            // Kaiiju start
++            int currentChunkNo = -1;
++            int toTickThisTick = (int)Math.ceil(chanceToTick * regionizedWorldData.getEntityTickingChunks().size());
++            if (chunkTickThrottle >= regionizedWorldData.getEntityTickingChunks().size()) chunkTickThrottle = 0;
++            int chunksTickedForThrottle = 0;
++            // Kaiiju end
+             int chunksTicked = 0; // Paper
+             try {
+             while (iterator1.hasNext()) {
+                 LevelChunk chunk1 = iterator1.next();
++                // Kaiiju start
++                currentChunkNo++;
++                if (currentChunkNo < chunkTickThrottle) continue;
++                if (chunksTickedForThrottle >= toTickThisTick) continue;
++                chunksTickedForThrottle++;
++                chunkTickThrottle++;
++                // Kaiiju end
+                 ChunkHolder holder = chunk1.playerChunk;
+                 if (holder != null) {
+                     // Paper - move down
+@@ -567,7 +601,7 @@ public class ServerChunkCache extends ChunkSource {
+ 
+                 if ((true || this.level.isNaturalSpawningAllowed(chunkcoordintpair)) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, false)) { // Paper - optimise anyPlayerCloseEnoughForSpawning // Paper - the chunk is known ticking
+                     chunk1.incrementInhabitedTime(j);
+-                    if (flag2 && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, true)) { // Spigot // Paper - optimise anyPlayerCloseEnoughForSpawning & optimise chunk tick iteration
++                    if (spawnCreaturesThisTick && flag2 && (this.spawnEnemies || this.spawnFriendlies) && this.level.getWorldBorder().isWithinBounds(chunkcoordintpair) && this.chunkMap.anyPlayerCloseEnoughForSpawning(holder, chunkcoordintpair, true)) { // Spigot // Paper - optimise anyPlayerCloseEnoughForSpawning & optimise chunk tick iteration // Kaiiju - throttling
+                         NaturalSpawner.spawnForChunk(this.level, chunk1, spawnercreature_d, this.spawnFriendlies, this.spawnEnemies, flag1);
+                     }
+ 
+@@ -586,6 +620,7 @@ public class ServerChunkCache extends ChunkSource {
+                 }
+             }
+             // Paper end - optimise chunk tick iteration
++            if (chunkTickThrottle >= regionizedWorldData.getEntityTickingChunks().size()) chunkTickThrottle = 0; // Kaiiju
+             this.level.timings.chunkTicks.stopTiming(); // Paper
+             gameprofilerfiller.popPush("customSpawners");
+             if (flag2) {

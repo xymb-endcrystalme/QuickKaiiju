@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Sun, 18 Jun 2023 23:07:11 +0200
+Subject: [PATCH] Optimization: ShulkerBox fast match.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index 64f1e51d7dc62c5208fb68280e6bc6963e12db6f..87b3c333c8241ffb637f2727327248d07e2f103a 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -215,6 +215,7 @@ public class KaiijuConfig {
+     public static boolean skipConnectionContains = false;
+     public static boolean disableChestLocking = false;
+     public static int broadcastPacketLimitPerTick = 0;
++    public static boolean shulkerBoxFastMatch = false;
+ 
+     private static void optimizationSettings() {
+         disableVanishApi = getBoolean("optimization.disable-vanish-api", disableVanishApi);
+@@ -226,6 +227,7 @@ public class KaiijuConfig {
+         disableChestLocking = getBoolean("optimization.disable-chest-locking", disableChestLocking);
+         broadcastPacketLimitPerTick = getInt("optimization.broadcast-packet-limit-per-tick", broadcastPacketLimitPerTick);
+         if (broadcastPacketLimitPerTick <= 0) broadcastPacketLimitPerTick = Integer.MAX_VALUE;
++        shulkerBoxFastMatch = getBoolean("optimization.shulker-box-fast-match", shulkerBoxFastMatch);
+     }
+ 
+     public static String serverModName = "Kaiiju";
+diff --git a/src/main/java/net/minecraft/world/item/ItemStack.java b/src/main/java/net/minecraft/world/item/ItemStack.java
+index ae02df4a0304f4a5a6113bb893662ce5538387ee..f341f8d1350ef3b1a9886b8ca6cffc3971fc290e 100644
+--- a/src/main/java/net/minecraft/world/item/ItemStack.java
++++ b/src/main/java/net/minecraft/world/item/ItemStack.java
+@@ -89,6 +89,7 @@ import net.minecraft.stats.Stats;
+ import net.minecraft.world.level.block.Blocks;
+ import net.minecraft.world.level.block.SaplingBlock;
+ import net.minecraft.world.level.block.SignBlock;
++import net.minecraft.world.level.block.ShulkerBoxBlock;
+ import net.minecraft.world.level.block.SoundType;
+ import net.minecraft.world.level.block.WitherSkullBlock;
+ import net.minecraft.world.level.block.entity.BlockEntity;
+@@ -751,6 +752,16 @@ public final class ItemStack {
+     }
+ 
+     public static boolean matches(ItemStack left, ItemStack right) {
++        // Kaiiju start
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.shulkerBoxFastMatch && !left.isEmpty() && !right.isEmpty()) {
++            if(left.getItem() instanceof BlockItem && right.getItem() instanceof BlockItem) {
++                if(((BlockItem)left.getItem()).getBlock() instanceof ShulkerBoxBlock && ((BlockItem)right.getItem()).getBlock() instanceof ShulkerBoxBlock) {
++                    return true; // Fast skip for shulkers, don't even bother with NBT tags
++                }
++            }
++        }
++        // Kaiiju end
++
+         return left == right ? true : (left.getCount() != right.getCount() ? false : ItemStack.isSameItemSameTags(left, right));
+     }
+ 

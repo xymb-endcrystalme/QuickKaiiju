@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Tue, 13 Jun 2023 09:01:53 +0200
+Subject: [PATCH] Optimization: Game rules throttling
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index 07c7894e7f690c13e186a9153493a6bee0aecf6d..b1d08cac1f1dca2a6287068ee46dff6a2f71fd0b 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -158,6 +158,7 @@ public class KaiijuWorldConfig {
+     public int brainSlowdown = 0;
+     public int temptSlowdown = 0;
+     public int tickChunksThrottlePlayers = 0;
++    public int gameRulesThrottling = 0;
+ 
+     private void optimizationSettings() {
+         shulkerBoxDropContentsWhenDestroyed = getBoolean("optimization.shulker-box-drop-contents-when-destroyed", shulkerBoxDropContentsWhenDestroyed);
+@@ -172,6 +173,7 @@ public class KaiijuWorldConfig {
+         brainSlowdown = Math.max(getInt("optimization.brain-slowdown", brainSlowdown), 0);
+         temptSlowdown = Math.max(getInt("optimization.tempt-slowdown", temptSlowdown), 0);
+         tickChunksThrottlePlayers = getInt("optimization.tick-chunks-throttle-players", tickChunksThrottlePlayers);
++        gameRulesThrottling = Math.max(getInt("optimization.game-rules-throttling", gameRulesThrottling), 0);
+     }
+ 
+     public boolean fixVoidTrading = true;
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index b531c484495865f2603b62867d777a6d1ffa313f..7e691dbbde5d0acc1b0ac63b1a91a5133d64c85d 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -533,7 +533,11 @@ public class ServerChunkCache extends ChunkSource {
+             ProfilerFiller gameprofilerfiller = this.level.getProfiler();
+ 
+             gameprofilerfiller.push("pollingChunks");
+-            int k = this.level.getGameRules().getInt(GameRules.RULE_RANDOMTICKING);
++            // Kaiiju start
++            if (getGameRulesThrottling % (this.level.kaiijuConfig.gameRulesThrottling + 1) == 0)
++                randomTickingMemory = this.level.getGameRules().getInt(GameRules.RULE_RANDOMTICKING);
++            int k = randomTickingMemory;
++            // Kaiiju end
+             boolean flag1 = level.ticksPerSpawnCategory.getLong(org.bukkit.entity.SpawnCategory.ANIMAL) != 0L && this.level.getRedstoneGameTime() % level.ticksPerSpawnCategory.getLong(org.bukkit.entity.SpawnCategory.ANIMAL) == 0L; // CraftBukkit // Folia - region threading
+ 
+             //gameprofilerfiller.push("naturalSpawnCount");
+@@ -556,7 +560,12 @@ public class ServerChunkCache extends ChunkSource {
+             // Paper - moved down
+ 
+             gameprofilerfiller.popPush("spawnAndTick");
+-            boolean flag2 = this.level.getGameRules().getBoolean(GameRules.RULE_DOMOBSPAWNING) && !regionizedWorldData.getLocalPlayers().isEmpty(); // CraftBukkit // Folia - region threading
++
++            // Kaiiju start
++            if (getGameRulesThrottling++ % (this.level.kaiijuConfig.gameRulesThrottling + 1) == 0)
++                doMobSpawningMemory = this.level.getGameRules().getBoolean(GameRules.RULE_DOMOBSPAWNING);
++            boolean flag2 = doMobSpawningMemory && !regionizedWorldData.getLocalPlayers().isEmpty(); // CraftBukkit // Folia - region threading
++            // Kaiiju end
+ 
+             // Paper - only shuffle if per-player mob spawning is disabled
+             // Paper - moved natural spawn event up

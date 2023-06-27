@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Mon, 12 Jun 2023 03:29:09 +0200
+Subject: [PATCH] Optimization: Throttle entity brains.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index 034aa7ec3d9da90c0e739874be31f100c1055b78..38f6971b8658fcf8a0e45aadc53e400068a22d08 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -155,6 +155,7 @@ public class KaiijuWorldConfig {
+     public boolean disableDolphinSwimToTreasure = false;
+     public int entityVisibilityLimitPerTick = 0;
+     public int spawnCreatureThrottlePlayers = 0;
++    public int brainSlowdown = 0;
+ 
+     private void optimizationSettings() {
+         shulkerBoxDropContentsWhenDestroyed = getBoolean("optimization.shulker-box-drop-contents-when-destroyed", shulkerBoxDropContentsWhenDestroyed);
+@@ -166,6 +167,7 @@ public class KaiijuWorldConfig {
+         disableDolphinSwimToTreasure = getBoolean("optimization.disable-dolphin-swim-to-treasure", disableDolphinSwimToTreasure);
+         entityVisibilityLimitPerTick = getInt("optimization.entity-visibility-limit-per-tick", entityVisibilityLimitPerTick);
+         spawnCreatureThrottlePlayers = getInt("optimization.spawn-creature-throttle-players", spawnCreatureThrottlePlayers);
++        brainSlowdown = Math.max(getInt("optimization.brain-slowdown", brainSlowdown), 0);
+     }
+ 
+     public boolean fixVoidTrading = true;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/Brain.java b/src/main/java/net/minecraft/world/entity/ai/Brain.java
+index 082b0594d5de2e952e0b2b64e76c1db3ddba82b9..5439ec70b99fc8bb0ceb1a008aefddb48338427f 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/Brain.java
++++ b/src/main/java/net/minecraft/world/entity/ai/Brain.java
+@@ -53,6 +53,7 @@ public class Brain<E extends LivingEntity> {
+     private final Set<Activity> activeActivities = Sets.newHashSet();
+     private Activity defaultActivity = Activity.IDLE;
+     private long lastScheduleUpdate = -9999L;
++    private int brainThrottle = 0; // Kaiiju
+ 
+     public static <E extends LivingEntity> Brain.Provider<E> provider(Collection<? extends MemoryModuleType<?>> memoryModules, Collection<? extends SensorType<? extends Sensor<? super E>>> sensors) {
+         return new Brain.Provider<>(memoryModules, sensors);
+@@ -384,6 +385,7 @@ public class Brain<E extends LivingEntity> {
+     }
+ 
+     public void tick(ServerLevel world, E entity) {
++        if (brainThrottle++ % (world.kaiijuConfig.brainSlowdown + 1) != 0) return; // Kaiiju
+         this.forgetOutdatedMemories();
+         this.tickSensors(world, entity);
+         this.startEachNonRunningBehavior(world, entity);

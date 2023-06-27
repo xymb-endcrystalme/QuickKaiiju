@@ -1,0 +1,18 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Tue, 13 Jun 2023 08:50:58 +0200
+Subject: [PATCH] Optimization: Remove unnecessary GetGameTime()
+
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index 5f8d43ce5313a316cdb62846efc448ec29c0a700..b531c484495865f2603b62867d777a6d1ffa313f 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -477,7 +477,6 @@ public class ServerChunkCache extends ChunkSource {
+         // Kaiiju end
+ 
+         io.papermc.paper.threadedregions.RegionizedWorldData regionizedWorldData = this.level.getCurrentWorldData(); // Folia - region threading
+-        long i = this.level.getGameTime();
+         long j = 1; // Folia - region threading
+ 
+         //this.lastInhabitedUpdate = i; // Folia - region threading

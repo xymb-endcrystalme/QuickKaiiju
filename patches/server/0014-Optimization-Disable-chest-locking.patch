@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Mon, 26 Jun 2023 21:00:52 +0200
+Subject: [PATCH] Optimization: Disable chest locking.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index a790da25e4353eadad29c14449fe920f96712fc0..ca000b2c0ef33bbceabc3ec264073fff3b717f62 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -213,6 +213,7 @@ public class KaiijuConfig {
+     public static boolean disableEnsureTickThreadChecks = false;
+     public static boolean flushPacketsAsync = false;
+     public static boolean skipConnectionContains = false;
++    public static boolean disableChestLocking = false;
+ 
+     private static void optimizationSettings() {
+         disableVanishApi = getBoolean("optimization.disable-vanish-api", disableVanishApi);
+@@ -221,6 +222,7 @@ public class KaiijuConfig {
+         disableEnsureTickThreadChecks = getBoolean("optimization.disable-ensure-tick-thread-checks", disableEnsureTickThreadChecks);
+         flushPacketsAsync = getBoolean("optimization.flush-packets-async", flushPacketsAsync);
+         skipConnectionContains = getBoolean("optimization.skip-connection-contains", skipConnectionContains);
++        disableChestLocking = getBoolean("optimization.disable-chest-locking", disableChestLocking);
+     }
+ 
+     public static String serverModName = "Kaiiju";
+diff --git a/src/main/java/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java b/src/main/java/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
+index 8d38ebfdc976b9695ed367591e58de8ca18f00f3..03e88bc9372e9b2a092fc471b19bae70a310958c 100644
+--- a/src/main/java/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
++++ b/src/main/java/net/minecraft/world/level/block/entity/BaseContainerBlockEntity.java
+@@ -78,6 +78,7 @@ public abstract class BaseContainerBlockEntity extends BlockEntity implements Co
+         return canUnlock(player, lock, containerName, null);
+     }
+     public static boolean canUnlock(Player player, LockCode lock, Component containerName, @Nullable BlockEntity blockEntity) {
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableChestLocking) return true; // Kaiiju
+         if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer && blockEntity != null && blockEntity.getLevel() != null && blockEntity.getLevel().getBlockEntity(blockEntity.getBlockPos()) == blockEntity) {
+             final org.bukkit.block.Block block = org.bukkit.craftbukkit.block.CraftBlock.at(blockEntity.getLevel(), blockEntity.getBlockPos());
+             net.kyori.adventure.text.Component lockedMessage = net.kyori.adventure.text.Component.translatable("container.isLocked", io.papermc.paper.adventure.PaperAdventure.asAdventure(containerName));

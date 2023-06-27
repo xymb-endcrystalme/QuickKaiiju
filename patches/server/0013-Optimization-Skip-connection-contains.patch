@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Tue, 13 Jun 2023 19:48:09 +0200
+Subject: [PATCH] Optimization: Skip connection contains
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index 5ec3a735198c21ea4f41d7f5b91521e090b438a5..a790da25e4353eadad29c14449fe920f96712fc0 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -212,6 +212,7 @@ public class KaiijuConfig {
+     public static boolean disableArmSwingEvent = false;
+     public static boolean disableEnsureTickThreadChecks = false;
+     public static boolean flushPacketsAsync = false;
++    public static boolean skipConnectionContains = false;
+ 
+     private static void optimizationSettings() {
+         disableVanishApi = getBoolean("optimization.disable-vanish-api", disableVanishApi);
+@@ -219,6 +220,7 @@ public class KaiijuConfig {
+         disableArmSwingEvent = getBoolean("optimization.disable-arm-swing-event", disableArmSwingEvent);
+         disableEnsureTickThreadChecks = getBoolean("optimization.disable-ensure-tick-thread-checks", disableEnsureTickThreadChecks);
+         flushPacketsAsync = getBoolean("optimization.flush-packets-async", flushPacketsAsync);
++        skipConnectionContains = getBoolean("optimization.skip-connection-contains", skipConnectionContains);
+     }
+ 
+     public static String serverModName = "Kaiiju";
+diff --git a/src/main/java/io/papermc/paper/threadedregions/RegionizedWorldData.java b/src/main/java/io/papermc/paper/threadedregions/RegionizedWorldData.java
+index 223bf699d76e53b131b47256df288db60141fd9e..3d2db320299b2f1fc273785cdc1db781023d027a 100644
+--- a/src/main/java/io/papermc/paper/threadedregions/RegionizedWorldData.java
++++ b/src/main/java/io/papermc/paper/threadedregions/RegionizedWorldData.java
+@@ -472,7 +472,7 @@ public final class RegionizedWorldData {
+                 );
+                 continue;
+             }
+-            if (!this.connections.contains(conn)) {
++            if (!dev.kaiijumc.kaiiju.KaiijuConfig.skipConnectionContains && !this.connections.contains(conn)) { // Kaiiju
+                 // removed by connection tick?
+                 continue;
+             }

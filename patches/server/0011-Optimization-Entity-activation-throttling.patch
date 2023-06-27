@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Tue, 13 Jun 2023 09:38:08 +0200
+Subject: [PATCH] Optimization: Entity activation throttling.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index b1d08cac1f1dca2a6287068ee46dff6a2f71fd0b..c09d06de0e3c4407a2e25bc03915157aefab7248 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -159,6 +159,7 @@ public class KaiijuWorldConfig {
+     public int temptSlowdown = 0;
+     public int tickChunksThrottlePlayers = 0;
+     public int gameRulesThrottling = 0;
++    public int entityActivationThrottling = 0;
+ 
+     private void optimizationSettings() {
+         shulkerBoxDropContentsWhenDestroyed = getBoolean("optimization.shulker-box-drop-contents-when-destroyed", shulkerBoxDropContentsWhenDestroyed);
+@@ -174,6 +175,7 @@ public class KaiijuWorldConfig {
+         temptSlowdown = Math.max(getInt("optimization.tempt-slowdown", temptSlowdown), 0);
+         tickChunksThrottlePlayers = getInt("optimization.tick-chunks-throttle-players", tickChunksThrottlePlayers);
+         gameRulesThrottling = Math.max(getInt("optimization.game-rules-throttling", gameRulesThrottling), 0);
++        entityActivationThrottling = Math.max(getInt("optimization.entity-activation-throttling", entityActivationThrottling), 0);
+     }
+ 
+     public boolean fixVoidTrading = true;
+diff --git a/src/main/java/net/minecraft/world/level/Level.java b/src/main/java/net/minecraft/world/level/Level.java
+index 8ecd3736e884459affe94341e99b8f3548617970..c24d7950dd96cbe19019585f1f3021a31d2e91fc 100644
+--- a/src/main/java/net/minecraft/world/level/Level.java
++++ b/src/main/java/net/minecraft/world/level/Level.java
+@@ -145,6 +145,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable {
+     private final RegistryAccess registryAccess;
+     private final DamageSources damageSources;
+     private final java.util.concurrent.atomic.AtomicLong subTickCount = new java.util.concurrent.atomic.AtomicLong(); //private long subTickCount; // Folia - region threading
++    public int entityActivationThrottlingProgress = 0; // Kaiiju
+ 
+     // CraftBukkit start Added the following
+     private final CraftWorld world;
+diff --git a/src/main/java/org/spigotmc/ActivationRange.java b/src/main/java/org/spigotmc/ActivationRange.java
+index 7c4daa8557f1956c8b823d4764791c60957d1091..205793d13d9cf6e59452688c748f8aba33e030a7 100644
+--- a/src/main/java/org/spigotmc/ActivationRange.java
++++ b/src/main/java/org/spigotmc/ActivationRange.java
+@@ -193,8 +193,15 @@ public class ActivationRange
+         // Paper end
+         maxRange = Math.min( ( world.spigotConfig.simulationDistance << 4 ) - 8, maxRange );
+ 
++        // Kaiiju start
++        world.entityActivationThrottlingProgress++;
++        int entityActivationThrottling = world.kaiijuConfig.entityActivationThrottling;
++        int currentPlayerNo = 0;
++        // Kaiiju end
++
+         for ( Player player : world.getLocalPlayers() ) // Folia - region threading
+         {
++            if ((currentPlayerNo + world.entityActivationThrottlingProgress) % (entityActivationThrottling + 1) != 0) continue;
+             player.activatedTick = io.papermc.paper.threadedregions.RegionizedServer.getCurrentTick(); // Folia - region threading
+             if ( world.spigotConfig.ignoreSpectatorActivation && player.isSpectator() )
+             {

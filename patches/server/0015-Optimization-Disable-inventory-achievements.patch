@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Mon, 26 Jun 2023 21:09:28 +0200
+Subject: [PATCH] Optimization: Disable inventory achievements.
+
+
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayer.java b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+index 5e81fd3b1f88f33314f7b24b3e9ba2be21addd0c..73e614066a9b02e7be9ed3de9346c6f67cffa2aa 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayer.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+@@ -369,6 +369,7 @@ public class ServerPlayer extends Player {
+ 
+                 if (!(slot instanceof ResultSlot)) {
+                     if (slot.container == ServerPlayer.this.getInventory()) {
++                        if (!ServerPlayer.this.level().kaiijuConfig.disableAchievements) // Kaiiju
+                         CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack);
+                     }
+ 
+@@ -381,12 +382,14 @@ public class ServerPlayer extends Player {
+                 if (!(slot instanceof ResultSlot)) {
+                     if (slot.container == ServerPlayer.this.getInventory()) {
+                         if (io.papermc.paper.event.player.PlayerInventorySlotChangeEvent.getHandlerList().getRegisteredListeners().length == 0) {
++                            if (!ServerPlayer.this.level().kaiijuConfig.disableAchievements) // Kaiiju
+                             CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack);
+                             return;
+                         }
+                         io.papermc.paper.event.player.PlayerInventorySlotChangeEvent event = new io.papermc.paper.event.player.PlayerInventorySlotChangeEvent(ServerPlayer.this.getBukkitEntity(), slotId, CraftItemStack.asBukkitCopy(oldStack), CraftItemStack.asBukkitCopy(stack));
+                         event.callEvent();
+                         if (event.shouldTriggerAdvancements()) {
++                            if (!ServerPlayer.this.level().kaiijuConfig.disableAchievements) // Kaiiju
+                             CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack);
+                         }
+                     }

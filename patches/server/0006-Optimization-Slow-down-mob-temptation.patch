@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Mon, 12 Jun 2023 05:12:02 +0200
+Subject: [PATCH] Optimization: Slow down mob temptation.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index 38f6971b8658fcf8a0e45aadc53e400068a22d08..2a423c2e807acec4b52987635b4447adb81f824c 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -156,6 +156,7 @@ public class KaiijuWorldConfig {
+     public int entityVisibilityLimitPerTick = 0;
+     public int spawnCreatureThrottlePlayers = 0;
+     public int brainSlowdown = 0;
++    public int temptSlowdown = 0;
+ 
+     private void optimizationSettings() {
+         shulkerBoxDropContentsWhenDestroyed = getBoolean("optimization.shulker-box-drop-contents-when-destroyed", shulkerBoxDropContentsWhenDestroyed);
+@@ -168,6 +169,7 @@ public class KaiijuWorldConfig {
+         entityVisibilityLimitPerTick = getInt("optimization.entity-visibility-limit-per-tick", entityVisibilityLimitPerTick);
+         spawnCreatureThrottlePlayers = getInt("optimization.spawn-creature-throttle-players", spawnCreatureThrottlePlayers);
+         brainSlowdown = Math.max(getInt("optimization.brain-slowdown", brainSlowdown), 0);
++        temptSlowdown = Math.max(getInt("optimization.tempt-slowdown", temptSlowdown), 0);
+     }
+ 
+     public boolean fixVoidTrading = true;
+diff --git a/src/main/java/net/minecraft/world/entity/ai/goal/TemptGoal.java b/src/main/java/net/minecraft/world/entity/ai/goal/TemptGoal.java
+index 0d9b194781d152e842c9a4b8d6f23d307b2e4452..006df3f2c941be352cc95fa4fb94c56304781dc9 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/goal/TemptGoal.java
++++ b/src/main/java/net/minecraft/world/entity/ai/goal/TemptGoal.java
+@@ -41,12 +41,15 @@ public class TemptGoal extends Goal {
+         this.targetingConditions = TemptGoal.TEMP_TARGETING.copy().selector(this::shouldFollow);
+     }
+ 
++    private int temptThrottle; // Kaiiju
++
+     @Override
+     public boolean canUse() {
+         if (this.calmDown > 0) {
+             --this.calmDown;
+             return false;
+         } else {
++            if (this.player == null && temptThrottle++ % (this.mob.level().kaiijuConfig.temptSlowdown + 1) != 0) return false; // Kaiiju
+             this.player = this.mob.level().getNearestPlayer(this.targetingConditions, this.mob);
+             // CraftBukkit start
+             if (this.player != null) {

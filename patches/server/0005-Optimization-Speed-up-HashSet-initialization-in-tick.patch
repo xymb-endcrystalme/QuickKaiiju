@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Mon, 12 Jun 2023 04:43:48 +0200
+Subject: [PATCH] Optimization: Speed up HashSet initialization in
+ tickBlockEntities.
+
+
+diff --git a/src/main/java/net/minecraft/world/level/Level.java b/src/main/java/net/minecraft/world/level/Level.java
+index 42727a50ae11cd4d4aa65eb57638bfb164f1e4ac..8ecd3736e884459affe94341e99b8f3548617970 100644
+--- a/src/main/java/net/minecraft/world/level/Level.java
++++ b/src/main/java/net/minecraft/world/level/Level.java
+@@ -1006,8 +1006,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable {
+         // Spigot start
+         // Iterator iterator = this.blockEntityTickers.iterator();
+         int tilesThisCycle = 0;
+-        var toRemove = new it.unimi.dsi.fastutil.objects.ObjectOpenCustomHashSet<TickingBlockEntity>(net.minecraft.Util.identityStrategy()); // Paper - use removeAll
+-        toRemove.add(null);
++        it.unimi.dsi.fastutil.objects.ObjectOpenCustomHashSet toRemove = null; // Kaiiju
+         for (int i = 0; i < blockEntityTickers.size(); i++) { // Paper - Disable tick limiters // Folia - regionised ticking
+             TickingBlockEntity tickingblockentity = (TickingBlockEntity) blockEntityTickers.get(i); // Folia - regionised ticking
+             // Spigot start
+@@ -1021,6 +1020,12 @@ public abstract class Level implements LevelAccessor, AutoCloseable {
+             if (tickingblockentity.isRemoved()) {
+                 // Spigot start
+                 tilesThisCycle--;
++                // Kaiiju start
++                if (toRemove == null) {
++                    toRemove = new it.unimi.dsi.fastutil.objects.ObjectOpenCustomHashSet<TickingBlockEntity>(net.minecraft.Util.identityStrategy()); // Paper - use removeAll
++                    toRemove.add(null);
++                }
++                // Kaiiju end
+                 toRemove.add(tickingblockentity); // Paper - use removeAll
+                 // Spigot end
+             } else if (this.shouldTickBlocksAt(tickingblockentity.getPos())) {
+@@ -1032,7 +1037,7 @@ public abstract class Level implements LevelAccessor, AutoCloseable {
+                 // Paper end - execute chunk tasks during tick
+             }
+         }
+-        blockEntityTickers.removeAll(toRemove); // Folia - regionised ticking
++        if (toRemove != null) blockEntityTickers.removeAll(toRemove); // Folia - regionised ticking // Kaiiju
+ 
+         timings.tileEntityTick.stopTiming(); // Spigot
+         regionizedWorldData.seTtickingBlockEntities(false); // Folia - regionised ticking

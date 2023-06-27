@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Fri, 16 Jun 2023 15:48:43 +0200
+Subject: [PATCH] Optimization: Limit broadcast packets per player.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index ca000b2c0ef33bbceabc3ec264073fff3b717f62..64f1e51d7dc62c5208fb68280e6bc6963e12db6f 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -214,6 +214,7 @@ public class KaiijuConfig {
+     public static boolean flushPacketsAsync = false;
+     public static boolean skipConnectionContains = false;
+     public static boolean disableChestLocking = false;
++    public static int broadcastPacketLimitPerTick = 0;
+ 
+     private static void optimizationSettings() {
+         disableVanishApi = getBoolean("optimization.disable-vanish-api", disableVanishApi);
+@@ -223,6 +224,8 @@ public class KaiijuConfig {
+         flushPacketsAsync = getBoolean("optimization.flush-packets-async", flushPacketsAsync);
+         skipConnectionContains = getBoolean("optimization.skip-connection-contains", skipConnectionContains);
+         disableChestLocking = getBoolean("optimization.disable-chest-locking", disableChestLocking);
++        broadcastPacketLimitPerTick = getInt("optimization.broadcast-packet-limit-per-tick", broadcastPacketLimitPerTick);
++        if (broadcastPacketLimitPerTick <= 0) broadcastPacketLimitPerTick = Integer.MAX_VALUE;
+     }
+ 
+     public static String serverModName = "Kaiiju";
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayer.java b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+index 73e614066a9b02e7be9ed3de9346c6f67cffa2aa..1f97b8767059ed534659b7196ea5d187a5304e21 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayer.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+@@ -747,6 +747,7 @@ public class ServerPlayer extends Player {
+ 
+     @Override
+     public void tick() {
++        resetBroadcastPacketCount(); // Kaiiju
+         // CraftBukkit start
+         if (this.joining) {
+             this.joining = false;
+@@ -2082,6 +2083,20 @@ public class ServerPlayer extends Player {
+ 
+     }
+ 
++    // Kaiiju start
++    private int broadcastPacketCountThisTick = 0;
++
++    private void resetBroadcastPacketCount() {
++        broadcastPacketCountThisTick = 0;
++    }
++
++    public boolean shouldSendBroadcastPackets() {
++        if (broadcastPacketCountThisTick++ >= dev.kaiijumc.kaiiju.KaiijuConfig.broadcastPacketLimitPerTick) return false;
++        return true;
++    }
++
++    // Kaiiju end
++
+     @Override
+     public void awardStat(Stat<?> stat, int amount) {
+         if (dev.kaiijumc.kaiiju.KaiijuConfig.disablePlayerStats) return; // Kaiiju - Disable player stats
+diff --git a/src/main/java/net/minecraft/server/players/PlayerList.java b/src/main/java/net/minecraft/server/players/PlayerList.java
+index 654ab7fc8caa9af7dc665391a197b41599c2bc8f..d580bed033c65164834dab1ad06654449d43fa9d 100644
+--- a/src/main/java/net/minecraft/server/players/PlayerList.java
++++ b/src/main/java/net/minecraft/server/players/PlayerList.java
+@@ -1282,6 +1282,7 @@ public abstract class PlayerList {
+                 double d6 = z - entityplayer.getZ();
+ 
+                 if (d4 * d4 + d5 * d5 + d6 * d6 < distance * distance) {
++                    if (!entityplayer.shouldSendBroadcastPackets()) continue; // Kaiiju
+                     entityplayer.connection.send(packet);
+                 }
+             }

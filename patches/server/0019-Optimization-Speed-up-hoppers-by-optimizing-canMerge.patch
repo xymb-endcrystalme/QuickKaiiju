@@ -1,0 +1,18 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Sat, 24 Jun 2023 17:00:58 +0200
+Subject: [PATCH] Optimization: Speed up hoppers by optimizing canMergeItems.
+
+
+diff --git a/src/main/java/net/minecraft/server/commands/LootCommand.java b/src/main/java/net/minecraft/server/commands/LootCommand.java
+index 5b6a6d8db5efd434c0fcf06984d246d999cf4d2f..528ae9231d6e30994f6d6fd0ff277ca9fff1a5ae 100644
+--- a/src/main/java/net/minecraft/server/commands/LootCommand.java
++++ b/src/main/java/net/minecraft/server/commands/LootCommand.java
+@@ -187,6 +187,7 @@ public class LootCommand {
+     }
+ 
+     private static boolean canMergeItems(ItemStack first, ItemStack second) {
++        if (!first.isStackable() || !second.isStackable()) return false; // Kaiiju
+         return first.getCount() <= first.getMaxStackSize() && ItemStack.isSameItemSameTags(first, second);
+     }
+ 

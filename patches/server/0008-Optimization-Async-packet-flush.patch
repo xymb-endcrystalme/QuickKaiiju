@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Tue, 13 Jun 2023 07:30:58 +0200
+Subject: [PATCH] Optimization: Async packet flush.
+
+IDK why it's not default so I made it configurable just in case.
+Updating Netty to 4.1.93 fixes lag problem.
+On 4.1.47 writeAndFlush doesn't flush immediately.
+
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 65b20a51327f2f7103e4ec23de2f04f3edf16c20..26407c48b41d3283b68fd2dcc7e590bc727a45b9 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -31,7 +31,7 @@ dependencies {
+      */
+     implementation("org.apache.logging.log4j:log4j-core:2.14.1") // Paper - implementation
+     annotationProcessor("org.apache.logging.log4j:log4j-core:2.14.1") // Paper - Needed to generate meta for our Log4j plugins
+-    implementation("io.netty:netty-codec-haproxy:4.1.87.Final") // Paper - Add support for proxy protocol
++    implementation("io.netty:netty-codec-haproxy:4.1.93.Final") // Paper - Add support for proxy protocol
+     // Paper end
+     implementation("org.apache.logging.log4j:log4j-iostreams:2.19.0") // Paper - remove exclusion
+     implementation("org.ow2.asm:asm:9.4")
+@@ -57,7 +57,7 @@ dependencies {
+     testImplementation("junit:junit:4.13.2")
+     testImplementation("org.hamcrest:hamcrest-library:1.3")
+ 
+-    implementation("io.netty:netty-all:4.1.87.Final"); // Paper - Bump netty
++    implementation("io.netty:netty-all:4.1.93.Final"); // Paper - Bump netty
+ }
+ 
+ val craftbukkitPackageVersion = "1_20_R1" // Paper
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index fa2a763e5784e7dae02c94a13751cbf746b6eee8..5ec3a735198c21ea4f41d7f5b91521e090b438a5 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -211,12 +211,14 @@ public class KaiijuConfig {
+     public static boolean disablePlayerStats = false;
+     public static boolean disableArmSwingEvent = false;
+     public static boolean disableEnsureTickThreadChecks = false;
++    public static boolean flushPacketsAsync = false;
+ 
+     private static void optimizationSettings() {
+         disableVanishApi = getBoolean("optimization.disable-vanish-api", disableVanishApi);
+         disablePlayerStats = getBoolean("optimization.disable-player-stats", disablePlayerStats);
+         disableArmSwingEvent = getBoolean("optimization.disable-arm-swing-event", disableArmSwingEvent);
+         disableEnsureTickThreadChecks = getBoolean("optimization.disable-ensure-tick-thread-checks", disableEnsureTickThreadChecks);
++        flushPacketsAsync = getBoolean("optimization.flush-packets-async", flushPacketsAsync);
+     }
+ 
+     public static String serverModName = "Kaiiju";
+diff --git a/src/main/java/net/minecraft/network/Connection.java b/src/main/java/net/minecraft/network/Connection.java
+index 619040e7197153af4c4a3fae62ce9d50d3408308..6abde5768545ab68b5f94f223f99b5177313018b 100644
+--- a/src/main/java/net/minecraft/network/Connection.java
++++ b/src/main/java/net/minecraft/network/Connection.java
+@@ -127,7 +127,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     // Paper end
+ 
+     // Paper start - allow controlled flushing
+-    volatile boolean canFlush = true;
++    volatile boolean canFlush = !dev.kaiijumc.kaiiju.KaiijuConfig.flushPacketsAsync; // Kaiiju
+     private final java.util.concurrent.atomic.AtomicInteger packetWrites = new java.util.concurrent.atomic.AtomicInteger();
+     private int flushPacketsStart;
+     private final Object flushLock = new Object();
+@@ -149,6 +149,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+     }
+ 
+     private final void flush() {
++        if (!dev.kaiijumc.kaiiju.KaiijuConfig.flushPacketsAsync) { // Kaiiju
+         if (this.channel.eventLoop().inEventLoop()) {
+             this.channel.flush();
+         } else {
+@@ -156,6 +157,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+                 this.channel.flush();
+             });
+         }
++        } // Kaiiju
+     }
+     // Paper end - allow controlled flushing
+     // Paper start - packet limiter
+@@ -489,6 +491,7 @@ public class Connection extends SimpleChannelInboundHandler<Packet<?>> {
+ 
+         try {
+             // Paper end
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.flushPacketsAsync) flush = true; // Kaiiju
+         ChannelFuture channelfuture = flush ? this.channel.writeAndFlush(packet) : this.channel.write(packet); // Paper - add flush parameter
+ 
+         if (callbacks != null) {
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index 581e33f450d1fec1b696bc177db0b17f9d09362d..5f8d43ce5313a316cdb62846efc448ec29c0a700 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -650,6 +650,10 @@ public class ServerChunkCache extends ChunkSource {
+             }
+             this.level.timings.broadcastChunkUpdates.stopTiming(); // Paper - timing
+             gameprofilerfiller.pop();
++            // Kaiiju start
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.flushPacketsAsync) {
++                this.chunkMap.tick();
++            } else { // Kaiiju end
+             // Paper end - use set of chunks requiring updates, rather than iterating every single one loaded
+             // Paper start - controlled flush for entity tracker packets
+             List<net.minecraft.network.Connection> disabledFlushes = new java.util.ArrayList<>(regionizedWorldData.getLocalPlayers().size()); // Folia - region threading
+@@ -669,6 +673,7 @@ public class ServerChunkCache extends ChunkSource {
+                 }
+             }
+             // Paper end - controlled flush for entity tracker packets
++            } // Kaiiju
+         }
+     }
+ 

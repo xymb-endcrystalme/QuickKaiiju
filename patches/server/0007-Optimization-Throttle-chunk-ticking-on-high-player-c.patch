@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Mon, 12 Jun 2023 05:50:15 +0200
+Subject: [PATCH] Optimization: Throttle chunk ticking on high player counts.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index 2a423c2e807acec4b52987635b4447adb81f824c..07c7894e7f690c13e186a9153493a6bee0aecf6d 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -157,6 +157,7 @@ public class KaiijuWorldConfig {
+     public int spawnCreatureThrottlePlayers = 0;
+     public int brainSlowdown = 0;
+     public int temptSlowdown = 0;
++    public int tickChunksThrottlePlayers = 0;
+ 
+     private void optimizationSettings() {
+         shulkerBoxDropContentsWhenDestroyed = getBoolean("optimization.shulker-box-drop-contents-when-destroyed", shulkerBoxDropContentsWhenDestroyed);
+@@ -170,6 +171,7 @@ public class KaiijuWorldConfig {
+         spawnCreatureThrottlePlayers = getInt("optimization.spawn-creature-throttle-players", spawnCreatureThrottlePlayers);
+         brainSlowdown = Math.max(getInt("optimization.brain-slowdown", brainSlowdown), 0);
+         temptSlowdown = Math.max(getInt("optimization.tempt-slowdown", temptSlowdown), 0);
++        tickChunksThrottlePlayers = getInt("optimization.tick-chunks-throttle-players", tickChunksThrottlePlayers);
+     }
+ 
+     public boolean fixVoidTrading = true;
+diff --git a/src/main/java/net/minecraft/server/level/ServerChunkCache.java b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+index ca2656e66d09b45d5c86b30ca83d93c8b24f2e38..581e33f450d1fec1b696bc177db0b17f9d09362d 100644
+--- a/src/main/java/net/minecraft/server/level/ServerChunkCache.java
++++ b/src/main/java/net/minecraft/server/level/ServerChunkCache.java
+@@ -605,7 +605,7 @@ public class ServerChunkCache extends ChunkSource {
+                         NaturalSpawner.spawnForChunk(this.level, chunk1, spawnercreature_d, this.spawnFriendlies, this.spawnEnemies, flag1);
+                     }
+ 
+-                    if (true || this.level.shouldTickBlocksAt(chunkcoordintpair.toLong())) { // Paper - the chunk is known ticking
++                    if (chanceToTick > java.util.concurrent.ThreadLocalRandom.current().nextFloat()) { // Kaiiju
+                         this.level.tickChunk(chunk1, k);
+                         if ((chunksTicked++ & 1) == 0) net.minecraft.server.MinecraftServer.getServer().executeMidTickTasks(); // Paper
+                     }

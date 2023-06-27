@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Sun, 11 Jun 2023 10:24:44 +0200
+Subject: [PATCH] Optimization: Entity visibility limiting per tick.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index e2fb7d7a7b3126d386b46442c115085d1974ac4e..40894c0cb36bc7d5c02454824a3ff3389267fb30 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -153,6 +153,7 @@ public class KaiijuWorldConfig {
+     public boolean disableAchievements = false;
+     public boolean disableCreaturesSpawnEvents = false;
+     public boolean disableDolphinSwimToTreasure = false;
++    public int entityVisibilityLimitPerTick = 0;
+ 
+     private void optimizationSettings() {
+         shulkerBoxDropContentsWhenDestroyed = getBoolean("optimization.shulker-box-drop-contents-when-destroyed", shulkerBoxDropContentsWhenDestroyed);
+@@ -162,6 +163,7 @@ public class KaiijuWorldConfig {
+         disableAchievements = getBoolean("optimization.disable-achievements", disableAchievements);
+         disableCreaturesSpawnEvents = getBoolean("optimization.disable-creatures-spawn-events", disableCreaturesSpawnEvents);
+         disableDolphinSwimToTreasure = getBoolean("optimization.disable-dolphin-swim-to-treasure", disableDolphinSwimToTreasure);
++        entityVisibilityLimitPerTick = getInt("optimization.entity-visibility-limit-per-tick", entityVisibilityLimitPerTick);
+     }
+ 
+     public boolean fixVoidTrading = true;
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index 4fb7ee801173c3f4621d7f09fcefe7c24da5f001..f56f032fec27ad8a1aeba407bfe2d6e3af54d524 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -1119,17 +1119,40 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         entity.tracker = null; // Paper - We're no longer tracked
+     }
+ 
++    private static int currentEntityIndex = 0; // Kaiiju
++
+     // Paper start - optimised tracker
+     private final void processTrackQueue() {
+         // Folia start - region threading
+         List<ServerPlayer> players = this.level.getLocalPlayers(); // Folia - region threading
++
++        // Kaiiju start
++        int entityVisibilityLimitPerTick = this.level.getLevel().kaiijuConfig.entityVisibilityLimitPerTick;
++        if (entityVisibilityLimitPerTick <= 0) entityVisibilityLimitPerTick = Integer.MAX_VALUE;
++        int idx = -1, iterated = 0;
++        if (currentEntityIndex >= this.level.getCurrentWorldData().getEntityCount())
++            currentEntityIndex = 0;
++        // Kaiiju end
++
+         for (Entity entity : this.level.getCurrentWorldData().getLocalEntities()) {
++            // Kaiiju start
++            boolean update = false;
++            idx += 1;
++            if (idx >= currentEntityIndex && iterated < entityVisibilityLimitPerTick) {
++                update = true;
++                iterated += 1;
++                currentEntityIndex += 1;
++            }
++            // Kaiiju end
++
+             TrackedEntity tracker = entity.tracker;
+             if (tracker == null) {
+                 continue;
+             }
++            if (update) { // Kaiiju
+             tracker.updatePlayers(players);
+             tracker.removeNonTickThreadPlayers();
++            } // Kaiiju
+             tracker.serverEntity.sendChanges();
+         }
+         // Folia end - region threading
