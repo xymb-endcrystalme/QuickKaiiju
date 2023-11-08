@@ -1,0 +1,675 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Wed, 8 Nov 2023 06:03:45 +0100
+Subject: [PATCH] Optimization: NBT deduplication for stash rapid loading.
+
+
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 26407c48b41d3283b68fd2dcc7e590bc727a45b9..dd13ad2a78d91d9c6a1572baf3022e0621a039dd 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -9,6 +9,7 @@ plugins {
+ dependencies {
+     // Folia start
+     implementation(project(":QuickKaiiju-API")) // Kaiiju // QuickKaiiju
++    implementation("net.openhft:zero-allocation-hashing:0.16") // Kaiiju
+     implementation("io.papermc.paper:paper-mojangapi:1.19.3-R0.1-SNAPSHOT") {
+         exclude("io.papermc.paper", "paper-api")
+     }
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index 055b6a4da324f6df9f649d213f943df6501a3f86..9945de1294ce4929bd78817d21996cc45028606b 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -245,4 +245,10 @@ public class KaiijuConfig {
+         fixBansByTrimmingItemPackets = getBoolean("optimization.fix-bans-by-trimming-item-packets", fixBansByTrimmingItemPackets);
+         disableAchievements = getBoolean("optimization.disable-achievements", disableAchievements);
+     }
++
++    public static boolean enableStashOptimization = false;
++
++    private static void becarefulSettings() {
++        enableStashOptimization = getBoolean("becareful.enable-stash-optimization", enableStashOptimization);
++    }
+ }
+diff --git a/src/main/java/io/papermc/paper/world/ThreadedWorldUpgrader.java b/src/main/java/io/papermc/paper/world/ThreadedWorldUpgrader.java
+index 389c68c0becd2f69dc1004d0b383f1a8784214c0..18765badcef4de2456c48f6222b24bc2b3091a83 100644
+--- a/src/main/java/io/papermc/paper/world/ThreadedWorldUpgrader.java
++++ b/src/main/java/io/papermc/paper/world/ThreadedWorldUpgrader.java
+@@ -91,7 +91,7 @@ public class ThreadedWorldUpgrader {
+         LOGGER.info("Using format " + formatName + " (" + linearCompression + ")");
+         // Kaiiju end
+         final WorldInfo info = new WorldInfo(() -> worldPersistentData,
+-                new ChunkStorage(formatName, linearCompression, linearCrashOnBrokenSymlink, regionFolder.toPath(), this.dataFixer, false), this.removeCaches, this.dimensionType, this.generatorKey); // Kaiiju
++                new ChunkStorage(worldName, formatName, linearCompression, linearCrashOnBrokenSymlink, regionFolder.toPath(), this.dataFixer, false), this.removeCaches, this.dimensionType, this.generatorKey); // Kaiiju
+ 
+         long expectedChunks = (long)regionFiles.length * (32L * 32L);
+ 
+diff --git a/src/main/java/net/minecraft/server/level/ChunkMap.java b/src/main/java/net/minecraft/server/level/ChunkMap.java
+index b3b19aba9478aacb2f2d8e373e8317368221df2b..51e4ea084154482d47422b5622a062b3269dddec 100644
+--- a/src/main/java/net/minecraft/server/level/ChunkMap.java
++++ b/src/main/java/net/minecraft/server/level/ChunkMap.java
+@@ -269,7 +269,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+     // Paper end
+ 
+     public ChunkMap(ServerLevel world, LevelStorageSource.LevelStorageAccess session, DataFixer dataFixer, StructureTemplateManager structureTemplateManager, Executor executor, BlockableEventLoop<Runnable> mainThreadExecutor, LightChunkGetter chunkProvider, ChunkGenerator chunkGenerator, ChunkProgressListener worldGenerationProgressListener, ChunkStatusUpdateListener chunkStatusChangeListener, Supplier<DimensionDataStorage> persistentStateManagerFactory, int viewDistance, boolean dsync) {
+-        super(world.getLevel().kaiijuConfig.regionFormatName, world.getLevel().kaiijuConfig.regionFormatLinearCompressionLevel, world.getLevel().kaiijuConfig.linearCrashOnBrokenSymlink, session.getDimensionPath(world.dimension()).resolve("region"), dataFixer, dsync); // Kaiiju
++        super(world.serverLevelData.getLevelName(), world.getLevel().kaiijuConfig.regionFormatName, world.getLevel().kaiijuConfig.regionFormatLinearCompressionLevel, world.getLevel().kaiijuConfig.linearCrashOnBrokenSymlink, session.getDimensionPath(world.dimension()).resolve("region"), dataFixer, dsync); // Kaiiju
+         // Paper - rewrite chunk system
+         this.tickingGenerated = new AtomicInteger();
+         //this.playerMap = new PlayerMap(); // Folia - region threading
+@@ -314,7 +314,7 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+         this.lightEngine = new ThreadedLevelLightEngine(chunkProvider, this, this.level.dimensionType().hasSkyLight(), null, null); // Paper - rewrite chunk system
+         this.distanceManager = new ChunkMap.ChunkDistanceManager(executor, mainThreadExecutor);
+         this.overworldDataStorage = persistentStateManagerFactory;
+-        this.poiManager = new PoiManager(this.level.kaiijuConfig.regionFormatName, this.level.kaiijuConfig.regionFormatLinearCompressionLevel, this.level.kaiijuConfig.linearCrashOnBrokenSymlink, path.resolve("poi"), dataFixer, dsync, iregistrycustom, world); // Kaiiju
++        this.poiManager = new PoiManager(this.level.serverLevelData.getLevelName(), this.level.kaiijuConfig.regionFormatName, this.level.kaiijuConfig.regionFormatLinearCompressionLevel, this.level.kaiijuConfig.linearCrashOnBrokenSymlink, path.resolve("poi"), dataFixer, dsync, iregistrycustom, world); // Kaiiju
+         this.setViewDistance(viewDistance);
+         // Paper start
+         this.dataRegionManager = new io.papermc.paper.chunk.SingleThreadChunkRegionManager(this.level, 2, (1.0 / 3.0), 1, 6, "Data", DataRegionData::new, DataRegionSectionData::new);
+@@ -795,6 +795,8 @@ public class ChunkMap extends ChunkStorage implements ChunkHolder.PlayerProvider
+             );
+         }
+         // Paper end - rewrite chunk system
++        this.level.serverLevelData.getLevelName();
++//        this.level.serverLevelData.getLevelName()
+         return super.readSync(chunkcoordintpair);
+     }
+ 
+diff --git a/src/main/java/net/minecraft/server/level/ServerLevel.java b/src/main/java/net/minecraft/server/level/ServerLevel.java
+index 761019f86983daaea4fface519e052f8fb6de1cd..d4395c93a55db6ae2321bcc1ca29e8f651c8ce34 100644
+--- a/src/main/java/net/minecraft/server/level/ServerLevel.java
++++ b/src/main/java/net/minecraft/server/level/ServerLevel.java
+@@ -426,8 +426,8 @@ public class ServerLevel extends Level implements WorldGenLevel {
+ 
+     private static final class EntityRegionFileStorage extends net.minecraft.world.level.chunk.storage.RegionFileStorage {
+ 
+-        public EntityRegionFileStorage(dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, boolean dsync) { // Kaiiju
+-            super(format, linearCompression, linearCrashOnBrokenSymlink, directory, dsync); // Kaiiju
++        public EntityRegionFileStorage(String worldName, dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, boolean dsync) { // Kaiiju
++            super(worldName, format, linearCompression, linearCrashOnBrokenSymlink, directory, dsync); // Kaiiju
+         }
+ 
+         protected void write(ChunkPos pos, net.minecraft.nbt.CompoundTag nbt) throws IOException {
+@@ -666,7 +666,7 @@ public class ServerLevel extends Level implements WorldGenLevel {
+         // CraftBukkit end
+         boolean flag2 = minecraftserver.forceSynchronousWrites();
+         DataFixer datafixer = minecraftserver.getFixerUpper();
+-        this.entityStorage = new EntityRegionFileStorage(this.getLevel().kaiijuConfig.regionFormatName, this.getLevel().kaiijuConfig.regionFormatLinearCompressionLevel, this.getLevel().kaiijuConfig.linearCrashOnBrokenSymlink, convertable_conversionsession.getDimensionPath(resourcekey).resolve("entities"), flag2); // Paper - rewrite chunk system  //EntityPersistentStorage<Entity> entitypersistentstorage = new EntityStorage(this, convertable_conversionsession.getDimensionPath(resourcekey).resolve("entities"), datafixer, flag2, minecraftserver); // Kaiiju
++        this.entityStorage = new EntityRegionFileStorage(this.getLevel().serverLevelData.getLevelName(), this.getLevel().kaiijuConfig.regionFormatName, this.getLevel().kaiijuConfig.regionFormatLinearCompressionLevel, this.getLevel().kaiijuConfig.linearCrashOnBrokenSymlink, convertable_conversionsession.getDimensionPath(resourcekey).resolve("entities"), flag2); // Paper - rewrite chunk system  //EntityPersistentStorage<Entity> entitypersistentstorage = new EntityStorage(this, convertable_conversionsession.getDimensionPath(resourcekey).resolve("entities"), datafixer, flag2, minecraftserver); // Kaiiju
+ 
+         // this.entityManager = new PersistentEntitySectionManager<>(Entity.class, new ServerLevel.EntityCallbacks(), entitypersistentstorage, this.entitySliceManager); // Paper // Paper - rewrite chunk system
+         StructureTemplateManager structuretemplatemanager = minecraftserver.getStructureManager();
+diff --git a/src/main/java/net/minecraft/util/worldupdate/WorldUpgrader.java b/src/main/java/net/minecraft/util/worldupdate/WorldUpgrader.java
+index a9c6ca7c621bb2431bcf0ae879b192f748bf931b..8d7c102054c0a3e5740caaf22b4484f379d9f922 100644
+--- a/src/main/java/net/minecraft/util/worldupdate/WorldUpgrader.java
++++ b/src/main/java/net/minecraft/util/worldupdate/WorldUpgrader.java
+@@ -121,7 +121,7 @@ public class WorldUpgrader {
+                 dev.kaiijumc.kaiiju.region.RegionFileFormat formatName = ((org.bukkit.craftbukkit.CraftWorld) org.bukkit.Bukkit.getWorld(worldName)).getHandle().kaiijuConfig.regionFormatName;
+                 int linearCompression = ((org.bukkit.craftbukkit.CraftWorld) org.bukkit.Bukkit.getWorld(worldName)).getHandle().kaiijuConfig.regionFormatLinearCompressionLevel;
+                 boolean linearCrashOnBrokenSymlink = ((org.bukkit.craftbukkit.CraftWorld) org.bukkit.Bukkit.getWorld(worldName)).getHandle().kaiijuConfig.linearCrashOnBrokenSymlink;
+-                builder1.put(resourcekey1, new ChunkStorage(formatName, linearCompression, linearCrashOnBrokenSymlink, path.resolve("region"), this.dataFixer, true));
++                builder1.put(resourcekey1, new ChunkStorage(worldName, formatName, linearCompression, linearCrashOnBrokenSymlink, path.resolve("region"), this.dataFixer, true));
+                 // Kaiiju end
+             }
+ 
+diff --git a/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiManager.java b/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiManager.java
+index b9cf3b9f2cdb554d267c6dc3436e011c7e607228..7232f6d0fe5886ce5aa77691ea8bdd196e3e7c2b 100644
+--- a/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiManager.java
++++ b/src/main/java/net/minecraft/world/entity/ai/village/poi/PoiManager.java
+@@ -59,8 +59,8 @@ public class PoiManager extends SectionStorage<PoiSection> {
+     // Paper end - rewrite chunk system
+ 
+ 
+-    public PoiManager(dev.kaiijumc.kaiiju.region.RegionFileFormat formatName, int linearCompression, boolean linearCrashOnBrokenSymlink, Path path, DataFixer dataFixer, boolean dsync, RegistryAccess registryManager, LevelHeightAccessor world) { // Kaiiju
+-        super(formatName, linearCompression, linearCrashOnBrokenSymlink, path, PoiSection::codec, PoiSection::new, dataFixer, DataFixTypes.POI_CHUNK, dsync, registryManager, world); // Kaiiju
++    public PoiManager(String worldName, dev.kaiijumc.kaiiju.region.RegionFileFormat formatName, int linearCompression, boolean linearCrashOnBrokenSymlink, Path path, DataFixer dataFixer, boolean dsync, RegistryAccess registryManager, LevelHeightAccessor world) { // Kaiiju
++        super(worldName, formatName, linearCompression, linearCrashOnBrokenSymlink, path, PoiSection::codec, PoiSection::new, dataFixer, DataFixTypes.POI_CHUNK, dsync, registryManager, world); // Kaiiju
+         this.world = (net.minecraft.server.level.ServerLevel)world; // Paper - rewrite chunk system
+     }
+ 
+diff --git a/src/main/java/net/minecraft/world/item/ItemStack.java b/src/main/java/net/minecraft/world/item/ItemStack.java
+index 90da03a9b91fa27794140a9b72cba6de281a17ea..7a89d8a03e8d94a922df91a07f148954b2712768 100644
+--- a/src/main/java/net/minecraft/world/item/ItemStack.java
++++ b/src/main/java/net/minecraft/world/item/ItemStack.java
+@@ -736,6 +736,7 @@ public final class ItemStack {
+             itemstack.setPopTime(this.getPopTime());
+             if (this.tag != null) {
+                 itemstack.tag = this.tag.copy();
++                itemstack.reduplicate(); // Kaiiju
+             }
+ 
+             return itemstack;
+@@ -746,8 +747,14 @@ public final class ItemStack {
+     public ItemStack slimCopy() {
+         ItemStack copy = new ItemStack(this.item, this.count);
+         copy.tag = this.tag;
++        copy.reduplicate();
+         return copy;
+     }
++
++    public void reduplicate() {
++        if (this.tag != null)
++            this.tag = xymb.NBTDeduplicator.instance().reduplicateTagNoCopy(this.tag);
++    }
+     // Kaiiju end
+ 
+     public ItemStack copyWithCount(int count) {
+@@ -840,6 +847,7 @@ public final class ItemStack {
+         if (this.getItem() instanceof net.minecraft.world.item.BundleItem) return new CompoundTag();
+         CompoundTag slimTag = this.tag.copy();
+         CompoundTag blockEntityTag = slimTag.getCompound("BlockEntityTag");
++        blockEntityTag.putString("THISSHOULDNTBEHERE", "MAKESUREITSNOT"); // Tag that should never be present in a region file
+         ListTag items = blockEntityTag.getList("Items", 10);
+ 
+         for (int i = 0; i < items.size(); i++) {
+diff --git a/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java b/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java
+index 4d4e503cfdefb8c8e7f03f5792f354ec0a41c125..8135e32fb795522569b1b8d785844d12e44365c2 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java
++++ b/src/main/java/net/minecraft/world/level/chunk/LevelChunk.java
+@@ -904,6 +904,13 @@ public class LevelChunk extends ChunkAccess {
+ 
+     @Override
+     public boolean isUnsaved() {
++        // Kaiiju start - force chunk save on first NBT deduplication
++        var chunkKey = new xymb.ChunkKey(this.level.serverLevelData.getLevelName(), this.locX, this.locZ);
++        if (xymb.DeduplicatorUpdateManager.shouldBeWritten(chunkKey)) {
++            xymb.DeduplicatorUpdateManager.done(chunkKey);
++            return true;
++        }
++        // Kaiiju end
+         // Paper start - add dirty system to tick lists
+         long gameTime = this.level.getRedstoneGameTime(); // Folia - region threading
+         if (this.blockTicks.isDirty(gameTime) || this.fluidTicks.isDirty(gameTime)) {
+diff --git a/src/main/java/net/minecraft/world/level/chunk/storage/ChunkStorage.java b/src/main/java/net/minecraft/world/level/chunk/storage/ChunkStorage.java
+index 41598adf6d49a44bcaadfff3797221460a6d93ba..350c1561222d219aba8969617433bb5fa6586f60 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/storage/ChunkStorage.java
++++ b/src/main/java/net/minecraft/world/level/chunk/storage/ChunkStorage.java
+@@ -37,11 +37,11 @@ public class ChunkStorage implements AutoCloseable {
+     public final RegionFileStorage regionFileCache;
+     // Paper end - async chunk loading
+ 
+-    public ChunkStorage(dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, DataFixer dataFixer, boolean dsync) { // Kaiiju
++    public ChunkStorage(String worldName, dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, DataFixer dataFixer, boolean dsync) { // Kaiiju
+         this.fixerUpper = dataFixer;
+         // Paper start - async chunk io
+         // remove IO worker
+-        this.regionFileCache = new RegionFileStorage(format, linearCompression, linearCrashOnBrokenSymlink, directory, dsync, true); // Paper - nuke IOWorker // Paper
++        this.regionFileCache = new RegionFileStorage(worldName, format, linearCompression, linearCrashOnBrokenSymlink, directory, dsync, true); // Paper - nuke IOWorker // Paper
+         // Paper end - async chunk io
+     }
+ 
+diff --git a/src/main/java/net/minecraft/world/level/chunk/storage/RegionFileStorage.java b/src/main/java/net/minecraft/world/level/chunk/storage/RegionFileStorage.java
+index 8409293b3f329715d6dff3d455c6a484d5b133ee..44150ecbb79ea58d50d72874cc93c0cb32e21aed 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/storage/RegionFileStorage.java
++++ b/src/main/java/net/minecraft/world/level/chunk/storage/RegionFileStorage.java
+@@ -28,6 +28,7 @@ public class RegionFileStorage implements AutoCloseable {
+     private final boolean sync;
+     // Kaiiju start - Per world chunk format
+     public final dev.kaiijumc.kaiiju.region.RegionFileFormat format;
++    public final String worldName;
+     public final int linearCompression;
+     public final boolean linearCrashOnBrokenSymlink;
+     // Kaiiju end
+@@ -62,12 +63,13 @@ public class RegionFileStorage implements AutoCloseable {
+     }
+     // Paper end - cache regionfile does not exist state
+ 
+-    protected RegionFileStorage(dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, boolean dsync) { // Paper - protected constructor
++    protected RegionFileStorage(String worldName, dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, boolean dsync) { // Paper - protected constructor
+         // Paper start - add isChunkData param
+-        this(format, linearCompression, linearCrashOnBrokenSymlink, directory, dsync, false);
++        this(worldName, format, linearCompression, linearCrashOnBrokenSymlink, directory, dsync, false);
+     }
+-    RegionFileStorage(dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, boolean dsync, boolean isChunkData) { // Kaiiju
++    RegionFileStorage(String worldName, dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path directory, boolean dsync, boolean isChunkData) { // Kaiiju
+         // Kaiiju start
++        this.worldName = worldName;
+         this.format = format;
+         this.linearCompression = linearCompression;
+         this.linearCrashOnBrokenSymlink = linearCrashOnBrokenSymlink;
+@@ -311,6 +313,7 @@ public class RegionFileStorage implements AutoCloseable {
+                         }
+                     }
+                     // Paper end - recover from corrupt regionfile header
++                    xymb.NBTDeduplicator.deduplicateContainersOnChunkRead(nbttagcompound, new xymb.ChunkKey(this.worldName, pos.x, pos.z)); // Kaiiju
+                     break label43;
+                 }
+ 
+@@ -390,6 +393,7 @@ public class RegionFileStorage implements AutoCloseable {
+             DataOutputStream dataoutputstream = regionfile.getChunkDataOutputStream(pos);
+ 
+             try {
++                xymb.NBTDeduplicator.deduplicateContainersOnWrite(nbt); // Kaiiju
+                 NbtIo.write(nbt, (DataOutput) dataoutputstream);
+                 regionfile.setStatus(pos.x, pos.z, ChunkSerializer.getStatus(nbt)); // Paper - cache status on disk
+                 regionfile.setOversized(pos.x, pos.z, false); // Paper - We don't do this anymore, mojang stores differently, but clear old meta flag if it exists to get rid of our own meta file once last oversized is gone
+diff --git a/src/main/java/net/minecraft/world/level/chunk/storage/SectionStorage.java b/src/main/java/net/minecraft/world/level/chunk/storage/SectionStorage.java
+index dcfe4a285cc5865be3b0c1b8104b722895135dd0..29d8c27d3eddd82082c7c0da9aafbdab54e88b4c 100644
+--- a/src/main/java/net/minecraft/world/level/chunk/storage/SectionStorage.java
++++ b/src/main/java/net/minecraft/world/level/chunk/storage/SectionStorage.java
+@@ -47,8 +47,8 @@ public class SectionStorage<R> extends RegionFileStorage implements AutoCloseabl
+     public final RegistryAccess registryAccess; // Paper - rewrite chunk system
+     protected final LevelHeightAccessor levelHeightAccessor;
+ 
+-    public SectionStorage(dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path path, Function<Runnable, Codec<R>> codecFactory, Function<Runnable, R> factory, DataFixer dataFixer, DataFixTypes dataFixTypes, boolean dsync, RegistryAccess dynamicRegistryManager, LevelHeightAccessor world) { // Kaiiju
+-        super(format, linearCompression, linearCrashOnBrokenSymlink, path, dsync); // Paper - remove mojang I/O thread // Kaiiju
++    public SectionStorage(String worldName, dev.kaiijumc.kaiiju.region.RegionFileFormat format, int linearCompression, boolean linearCrashOnBrokenSymlink, Path path, Function<Runnable, Codec<R>> codecFactory, Function<Runnable, R> factory, DataFixer dataFixer, DataFixTypes dataFixTypes, boolean dsync, RegistryAccess dynamicRegistryManager, LevelHeightAccessor world) { // Kaiiju
++        super(worldName, format, linearCompression, linearCrashOnBrokenSymlink, path, dsync); // Paper - remove mojang I/O thread // Kaiiju
+         this.codec = codecFactory;
+         this.factory = factory;
+         this.fixerUpper = dataFixer;
+diff --git a/src/main/java/xymb/ChunkKey.java b/src/main/java/xymb/ChunkKey.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..1e8df06b37ee7a6b93ad1c6f94726bd141827e92
+--- /dev/null
++++ b/src/main/java/xymb/ChunkKey.java
+@@ -0,0 +1,47 @@
++package xymb;
++// Stolen from MultiPaper. Credit goes to PureGero - https://github.com/multipaper/multipaper
++
++public class ChunkKey {
++    private final String path;
++    private final int x;
++    private final int z;
++
++    public ChunkKey(String path, int x, int z) {
++        this.path = path;
++        this.x = x;
++        this.z = z;
++    }
++
++    @Override
++    public boolean equals(Object other) {
++        if (other instanceof ChunkKey) {
++            return ((ChunkKey) other).path.equals(path)
++                    && ((ChunkKey) other).x == x
++                    && ((ChunkKey) other).z == z;
++        }
++
++        return super.equals(other);
++    }
++
++    @Override
++    public int hashCode() {
++        // Taken from ChunkCoordIntPair
++        int i = 1664525 * this.x + 1013904223;
++        int j = 1664525 * (this.z ^ -559038737) + 1013904223;
++
++        return path.hashCode() ^ i ^ j;
++    }
++
++    public int getX() {
++        return x;
++    }
++
++    public int getZ() {
++        return z;
++    }
++
++    public String toString() {
++        return "<" + this.path + " " + this.x + " " + this.z + ">";
++    }
++}
++
+diff --git a/src/main/java/xymb/DeduplicatorUpdateManager.java b/src/main/java/xymb/DeduplicatorUpdateManager.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..578b81811d2c75bc0f1b2f2802bbfda5686c3e2d
+--- /dev/null
++++ b/src/main/java/xymb/DeduplicatorUpdateManager.java
+@@ -0,0 +1,28 @@
++package xymb;
++
++import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
++
++public class DeduplicatorUpdateManager {
++    static ObjectOpenHashSet<ChunkKey> set = new ObjectOpenHashSet<>();
++
++    public static void markForUpdate(ChunkKey key) {
++        synchronized(set) {
++            set.add(key);
++        }
++    }
++
++    public static void done(ChunkKey key) {
++        synchronized(set) {
++            set.remove(key);
++        }
++    }
++
++    public static boolean shouldBeWritten(ChunkKey key) {
++        synchronized(set) {
++            if (set.contains(key)) {
++                return true;
++            }
++            return false;
++        }
++    }
++}
+diff --git a/src/main/java/xymb/NBTDeduplicator.java b/src/main/java/xymb/NBTDeduplicator.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..c4b1b80dbefb10e5140b6f93ff26908a2d08ff9c
+--- /dev/null
++++ b/src/main/java/xymb/NBTDeduplicator.java
+@@ -0,0 +1,322 @@
++package xymb;
++
++import java.util.ArrayList;
++import java.io.IOException;
++import net.minecraft.nbt.CompoundTag;
++import net.minecraft.nbt.ListTag;
++import net.minecraft.nbt.Tag;
++import net.minecraft.nbt.StringTag;
++import java.io.ByteArrayOutputStream;
++import java.io.DataOutputStream;
++import java.io.DataOutput;
++import java.io.FileOutputStream;
++import java.io.File;
++import net.minecraft.nbt.NbtIo;
++import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
++import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
++import net.openhft.hashing.LongTupleHashFunction;
++import xymb.ChunkKey;
++import java.lang.Thread;
++import java.util.concurrent.ConcurrentLinkedQueue;
++import java.io.FileNotFoundException;
++import java.nio.file.StandardCopyOption;
++import java.nio.file.Files;
++import java.io.FileInputStream;
++import net.minecraft.nbt.NbtAccounter;
++import java.io.DataInputStream;
++
++public class NBTDeduplicator {
++    Object2ObjectOpenHashMap<Hash128, ListTag> tags = new Object2ObjectOpenHashMap<>();
++
++    private static NBTDeduplicator instance = null;
++
++    public static NBTDeduplicator instance() {
++        if (instance == null) {
++            instance = new NBTDeduplicator();
++        }
++        return instance;
++    }
++
++    public static class Hash128 {
++        public long lower, upper;
++
++        Hash128(long[] hash) {
++            this.lower = hash[0];
++            this.upper = hash[1];
++        }
++
++        Hash128(long lower, long upper) {
++            this.lower = lower;
++            this.upper = upper;
++        }
++
++        @Override
++        public boolean equals(final Object o) {
++            if (o instanceof Hash128) {
++                Hash128 other = (Hash128)o;
++                return this.lower == other.lower && this.upper == other.upper;
++            }
++            return false;
++        }
++
++        @Override
++        public int hashCode() {
++            return (int)this.lower;
++        }
++
++        public String hashString() {
++            return String.format("%016x%016x", this.lower, this.upper);
++        }
++    }
++
++    void addHash(Hash128 hash, ListTag tag) {
++        synchronized (tags) {
++            if (tags.get(hash) == null) {
++                ListTag copy = tag.copy();
++                tags.put(hash, copy);
++            }
++        }
++    }
++
++    public void addHash(String hash, ListTag tag) {
++        long lower = Long.parseLong(hash.substring(0, 16), 16);
++        long upper = Long.parseLong(hash.substring(16, 32), 16);
++
++        synchronized (tags) {
++            addHash(new Hash128(lower, upper), tag);
++        }
++    }
++
++    static boolean first = false;
++
++    ListTag getHash(Hash128 hash) {
++        synchronized (tags) {
++            ListTag deduplicated = tags.get(hash);
++            return deduplicated;
++        }
++    }
++
++    public String addAndGetHex(ListTag tag) {
++        Hash128 hash = hashNBT(tag);
++        ListTag deduplicated;
++
++        synchronized (tags) {
++            deduplicated = tags.get(hash);
++            if (deduplicated == null) {
++                // System.out.println("Adding hash " + hash.hashString());
++                addHash(hash, tag);
++            }
++        }
++
++        return hash.hashString();
++    }
++
++    public Hash128 hashNBT(ListTag tag) {
++        ByteArrayOutputStream baos = new ByteArrayOutputStream();
++        try {
++            DataOutputStream dos = new DataOutputStream(baos);
++            tag.write(dos);
++        } catch (IOException ex) {
++            System.out.println("Exception in NBT hashing: " + ex);
++            return null;
++        }
++        long[] rawHash = LongTupleHashFunction.xx128().hashBytes(baos.toByteArray());
++        if (rawHash[0] < 0) rawHash[0] *= -1; // Fucking Java doesn't support uints...
++        if (rawHash[1] < 0) rawHash[1] *= -1; // Nor 128 bit numbers
++        return new Hash128(rawHash);
++    }
++
++    public Hash128 hashFromLU(long lower, long upper) {
++        long array[] = new long[2];
++        array[0] = lower;
++        array[1] = upper;
++        return new Hash128(array);
++    }
++
++    public ListTag getFromHash(String hash) {
++        long lower = Long.parseLong(hash.substring(0, 16), 16);
++        long upper = Long.parseLong(hash.substring(16, 32), 16);
++
++        return getFromHash(lower, upper);
++    }
++
++    public boolean containsHash(String hash) {
++        long lower = Long.parseLong(hash.substring(0, 16), 16);
++        long upper = Long.parseLong(hash.substring(16, 32), 16);
++        Hash128 hash128 = hashFromLU(lower, upper);
++        ListTag deduplicated;
++        synchronized (tags) {
++            deduplicated = tags.get(hash128);
++        }
++        return deduplicated != null;
++    }
++
++    public int size() {
++        return tags.size();
++    }
++
++    public ListTag getFromHash(long lower, long upper) {
++        Hash128 hash = hashFromLU(lower, upper);
++        ListTag deduplicated;
++        synchronized (tags) {
++            deduplicated = getHash(hash);
++        }
++        if (deduplicated == null) return deduplicated;
++        return deduplicated.copy();
++    }
++
++    public ListTag makePalette() {
++        var list = new ListTag();
++        int i = 0;
++        synchronized (tags) {
++            for (var entry: tags.entrySet()) {
++                CompoundTag hashTag = new CompoundTag();
++                hashTag.putString("hash", entry.getKey().hashString());
++                hashTag.put("item", entry.getValue());
++                list.add(i, hashTag);
++                i++;
++            }
++        }
++        return list;
++    }
++
++    public CompoundTag reduplicateTagNoCopy(CompoundTag tag) {
++        if (tag == null) return tag;
++        if (!tag.contains("BlockEntityTag")) return tag;
++        CompoundTag blockEntityTag = tag.getCompound("BlockEntityTag");
++        if (!blockEntityTag.contains("hash")) return tag;
++
++        ListTag items = getFromHash(blockEntityTag.getString("hash"));
++        if (items != null) {
++            CompoundTag newBlockEntityTag = tag.getCompound("BlockEntityTag").copy();
++            newBlockEntityTag.put("Items", items);
++            newBlockEntityTag.remove("hash");
++            tag.put("BlockEntityTag", newBlockEntityTag);
++        } else {
++            Thread.dumpStack();
++            System.out.println("ERROR! Unknown deduplication hash " + blockEntityTag.getString("hash") + " " + blockEntityTag.contains("Items"));
++            if (blockEntityTag.contains("Items"))
++                System.out.println(blockEntityTag.get("Items"));
++        }
++        return tag;
++    }
++
++    public static void deduplicateContainersOnChunkRead(CompoundTag nbt, ChunkKey key) {
++        if (nbt == null) return;
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.enableStashOptimization == false) return;
++        int regionVersion = nbt.getInt("DataVersion");
++        if (regionVersion < 3120) return; // 1.19.2
++
++        NBTDeduplicator deduplicator = NBTDeduplicator.instance();
++
++        int oldItemHashesSize = deduplicator.size();
++
++        if (nbt.contains("anarchyOptimization")) {
++            CompoundTag anarchyOptimization = nbt.getCompound("anarchyOptimization");
++            int version = nbt.getInt("version");
++            ListTag itemPalette = anarchyOptimization.getList("itemPalette", 10);
++            for(int i = 0; i < itemPalette.size(); ++i) {
++                CompoundTag paletteItem = itemPalette.getCompound(i);
++                String hash = paletteItem.getString("hash");
++                deduplicator.addHash(hash, paletteItem.getList("item", 10));
++            }
++        }
++
++        int deduplicatedItems = 0;
++        ListTag nbttaglist3 = nbt.getList("block_entities", 10);
++        for (int k1 = 0; k1 < nbttaglist3.size(); ++k1) {
++            CompoundTag blockEntityNbt = nbttaglist3.getCompound(k1);
++            if (blockEntityNbt.contains("Items")) {
++                ListTag items = blockEntityNbt.getList("Items", 10);
++                for(int i = 0; i < items.size(); ++i) {
++                    CompoundTag itemTag = items.getCompound(i);
++                    if (itemTag.contains("id")) {
++                        String id = itemTag.getString("id");
++                        if (id.contains("shulker_box")) {
++                            if (itemTag.contains("tag")) {
++                                CompoundTag tag = itemTag.getCompound("tag");
++                                if (tag.contains("BlockEntityTag")) {
++                                    CompoundTag blockEntityTag = tag.getCompound("BlockEntityTag");
++                                    if (blockEntityTag.contains("Items")) {
++                                        ListTag itemsInsideTag = blockEntityTag.getList("Items", 10);
++                                        String hash = deduplicator.addAndGetHex(itemsInsideTag);
++
++                                        blockEntityTag.remove("Items");
++                                        blockEntityTag.putString("hash", hash);
++                                        deduplicatedItems++;
++                                    }
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++        }
++        if (deduplicatedItems > 0 && !nbt.contains("anarchyOptimization")) {
++            DeduplicatorUpdateManager.markForUpdate(key);
++        }
++    }
++
++    public static void deduplicateContainersOnWrite(CompoundTag nbt) {
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.enableStashOptimization == false) return;
++        if (nbt == null) return;
++        int hash = 0;
++        int item = 0;
++        int both = 0;
++        NBTDeduplicator globalDeduplicator = NBTDeduplicator.instance();
++        NBTDeduplicator deduplicator = new NBTDeduplicator();
++
++
++        ListTag nbttaglist3 = nbt.getList("block_entities", 10);
++        for (int k1 = 0; k1 < nbttaglist3.size(); ++k1) {
++            CompoundTag blockEntityNbt = nbttaglist3.getCompound(k1);
++            if (blockEntityNbt.contains("Items")) {
++                ListTag items = blockEntityNbt.getList("Items", 10);
++                for(int i = 0; i < items.size(); ++i) {
++                    CompoundTag itemTag = items.getCompound(i);
++                    if (itemTag.contains("id")) {
++                        String id = itemTag.getString("id");
++                        if (id.contains("shulker_box")) {
++                            if (itemTag.contains("tag")) {
++                                CompoundTag tag = itemTag.getCompound("tag");
++                                if (tag.contains("BlockEntityTag")) {
++                                    CompoundTag blockEntityTag = tag.getCompound("BlockEntityTag");
++                                    CompoundTag newBlockEntityTag = blockEntityTag.copy();
++                                    tag.put("BlockEntityTag", newBlockEntityTag);
++                                    blockEntityTag = newBlockEntityTag;
++                                    boolean hasHash = false;
++                                    if (blockEntityTag.contains("hash")) {
++                                        if (!deduplicator.containsHash(blockEntityTag.getString("hash"))) {
++                                            deduplicator.addHash(blockEntityTag.getString("hash"), globalDeduplicator.getFromHash(blockEntityTag.getString("hash")));
++                                        }
++                                        hasHash = true;
++                                        hash++;
++                                    }
++                                    if (blockEntityTag.contains("Items")) {
++                                        String hashTag = deduplicator.addAndGetHex(blockEntityTag.getList("Items", 10));
++                                        globalDeduplicator.addHash(hashTag, blockEntityTag.getList("Items", 10));
++                                        blockEntityTag.remove("Items");
++                                        blockEntityTag.putString("hash", hashTag);
++                                        if (hasHash) both++;
++                                        item++;
++                                    }
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++        }
++
++        if (hash > 0 || item > 0) {
++            CompoundTag anarchyOptimization = new CompoundTag();
++            anarchyOptimization.putInt("version", 1);
++            anarchyOptimization.put("itemPalette", deduplicator.makePalette());
++            nbt.put("anarchyOptimization", anarchyOptimization);
++        }
++
++        if (hash > 0 || item > 0 || both > 0) {
++            // System.out.println("Deduplication report - " + hash + " " + item + " " + both);
++        }
++    }
++}

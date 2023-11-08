@@ -1,0 +1,497 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Xymb <xymb@endcrystal.me>
+Date: Wed, 8 Nov 2023 05:48:13 +0100
+Subject: [PATCH] Chest open optimization WIP & achievements disable. Too lazy
+ to split.
+
+
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+index b90894d54f3f58a2c79788cae08ee3213b9a1c01..055b6a4da324f6df9f649d213f943df6501a3f86 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuConfig.java
+@@ -233,10 +233,16 @@ public class KaiijuConfig {
+     public static String serverModName = "Kaiiju";
+     public static boolean sharedRandomForPlayers = true;
+     public static boolean enderPearlsDespawnOnPlayerDeath = true;
++    public static boolean skipHopefullyUnnecessaryNBTCopies = false;
++    public static boolean fixBansByTrimmingItemPackets = false;
++    public static boolean disableAchievements = false;
+ 
+     private static void gameplaySettings() {
+         serverModName = getString("gameplay.server-mod-name", serverModName);
+         sharedRandomForPlayers = getBoolean("gameplay.shared-random-for-players", sharedRandomForPlayers);
+         enderPearlsDespawnOnPlayerDeath = getBoolean("gameplay.ender-pearls-despawn-on-player-death", enderPearlsDespawnOnPlayerDeath);
++        skipHopefullyUnnecessaryNBTCopies = getBoolean("optimization.skip-hopefully-unnecessary-nbt-copies", skipHopefullyUnnecessaryNBTCopies);
++        fixBansByTrimmingItemPackets = getBoolean("optimization.fix-bans-by-trimming-item-packets", fixBansByTrimmingItemPackets);
++        disableAchievements = getBoolean("optimization.disable-achievements", disableAchievements);
+     }
+ }
+diff --git a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+index c09d06de0e3c4407a2e25bc03915157aefab7248..e836a3dbb2a930a55b48b6138c8e4ad1f017816d 100644
+--- a/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
++++ b/src/main/java/dev/kaiijumc/kaiiju/KaiijuWorldConfig.java
+@@ -150,7 +150,6 @@ public class KaiijuWorldConfig {
+     public boolean optimizeHoppers = true;
+     public boolean tickWhenEmpty = true;
+     public boolean enableEntityThrottling = false;
+-    public boolean disableAchievements = false;
+     public boolean disableCreaturesSpawnEvents = false;
+     public boolean disableDolphinSwimToTreasure = false;
+     public int entityVisibilityLimitPerTick = 0;
+@@ -166,7 +165,6 @@ public class KaiijuWorldConfig {
+         optimizeHoppers = getBoolean("optimization.optimize-hoppers", optimizeHoppers);
+         tickWhenEmpty = getBoolean("optimization.tick-when-empty", tickWhenEmpty);
+         enableEntityThrottling = getBoolean("optimization.enable-entity-throttling", enableEntityThrottling);
+-        disableAchievements = getBoolean("optimization.disable-achievements", disableAchievements);
+         disableCreaturesSpawnEvents = getBoolean("optimization.disable-creatures-spawn-events", disableCreaturesSpawnEvents);
+         disableDolphinSwimToTreasure = getBoolean("optimization.disable-dolphin-swim-to-treasure", disableDolphinSwimToTreasure);
+         entityVisibilityLimitPerTick = getInt("optimization.entity-visibility-limit-per-tick", entityVisibilityLimitPerTick);
+diff --git a/src/main/java/net/minecraft/network/FriendlyByteBuf.java b/src/main/java/net/minecraft/network/FriendlyByteBuf.java
+index 9938bb90bef84cf784f9a1ceb02a1a45aa8b48a1..9bb1a2c8b161dd64b94b13a4bd028ea9a95327ed 100644
+--- a/src/main/java/net/minecraft/network/FriendlyByteBuf.java
++++ b/src/main/java/net/minecraft/network/FriendlyByteBuf.java
+@@ -674,6 +674,33 @@ public class FriendlyByteBuf extends ByteBuf {
+         }
+     }
+ 
++    // Kaiiju start
++    public FriendlyByteBuf writeItemSlim(ItemStack stack) {
++        if (stack.isEmpty() || stack.getItem() == null) { // CraftBukkit - NPE fix itemstack.getItem()
++            this.writeBoolean(false);
++        } else {
++            this.writeBoolean(true);
++            Item item = stack.getItem();
++
++            this.writeId(BuiltInRegistries.ITEM, item);
++            this.writeByte(stack.getCount());
++            CompoundTag nbttagcompound = null;
++
++            if (item.canBeDepleted() || item.shouldOverrideMultiplayerNbt()) {
++                // Spigot start - filter
++                // stack = stack.copy();
++                // CraftItemStack.setItemMeta(stack, CraftItemStack.getItemMeta(stack)); // Paper - This is no longer with raw NBT being handled in metadata
++                // Spigot end
++                nbttagcompound = stack.getTagSlim();
++            }
++
++            this.writeNbt(nbttagcompound);
++        }
++
++        return this;
++    }
++    // Kaiiju end
++
+     public FriendlyByteBuf writeItem(ItemStack stack) {
+         if (stack.isEmpty() || stack.getItem() == null) { // CraftBukkit - NPE fix itemstack.getItem()
+             this.writeBoolean(false);
+diff --git a/src/main/java/net/minecraft/network/protocol/game/ClientboundContainerSetContentPacket.java b/src/main/java/net/minecraft/network/protocol/game/ClientboundContainerSetContentPacket.java
+index dbd8b9b09b82c1b75e8be9dc7416d9f0863c8c87..d213a0e87f52b470b95efd37cfc6347521f757d8 100644
+--- a/src/main/java/net/minecraft/network/protocol/game/ClientboundContainerSetContentPacket.java
++++ b/src/main/java/net/minecraft/network/protocol/game/ClientboundContainerSetContentPacket.java
+@@ -17,11 +17,21 @@ public class ClientboundContainerSetContentPacket implements Packet<ClientGamePa
+         this.stateId = revision;
+         this.items = NonNullList.withSize(contents.size(), ItemStack.EMPTY);
+ 
+-        for(int i = 0; i < contents.size(); ++i) {
+-            this.items.set(i, contents.get(i).copy());
+-        }
++        // Kaiiju start
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.skipHopefullyUnnecessaryNBTCopies) {
++            for(int i = 0; i < contents.size(); ++i) {
++                this.items.set(i, contents.get(i).slimCopy());
++            }
++
++            this.carriedItem = cursorStack.slimCopy();
++        } else {
++            for(int i = 0; i < contents.size(); ++i) {
++                this.items.set(i, contents.get(i).copy());
++            }
+ 
+-        this.carriedItem = cursorStack.copy();
++            this.carriedItem = cursorStack.copy();
++        }
++        // Kaiiju end
+     }
+ 
+     public ClientboundContainerSetContentPacket(FriendlyByteBuf buf) {
+@@ -45,8 +55,15 @@ public class ClientboundContainerSetContentPacket implements Packet<ClientGamePa
+     public void write(FriendlyByteBuf buf) {
+         buf.writeByte(this.containerId);
+         buf.writeVarInt(this.stateId);
+-        buf.writeCollection(this.items, FriendlyByteBuf::writeItem);
+-        buf.writeItem(this.carriedItem);
++        // Kaiiju start
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.fixBansByTrimmingItemPackets) {
++            buf.writeCollection(this.items, FriendlyByteBuf::writeItemSlim);
++            buf.writeItemSlim(this.carriedItem);
++        } else {
++            buf.writeCollection(this.items, FriendlyByteBuf::writeItem);
++            buf.writeItem(this.carriedItem);
++        }
++        // Kaiiju end
+     }
+ 
+     @Override
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayer.java b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+index 1f97b8767059ed534659b7196ea5d187a5304e21..3729960bf707dfe02f3f1626248f1b21ecfe6e2c 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayer.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayer.java
+@@ -369,8 +369,7 @@ public class ServerPlayer extends Player {
+ 
+                 if (!(slot instanceof ResultSlot)) {
+                     if (slot.container == ServerPlayer.this.getInventory()) {
+-                        if (!ServerPlayer.this.level().kaiijuConfig.disableAchievements) // Kaiiju
+-                        CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack);
++                        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack); // Kaiiju
+                     }
+ 
+                 }
+@@ -382,15 +381,13 @@ public class ServerPlayer extends Player {
+                 if (!(slot instanceof ResultSlot)) {
+                     if (slot.container == ServerPlayer.this.getInventory()) {
+                         if (io.papermc.paper.event.player.PlayerInventorySlotChangeEvent.getHandlerList().getRegisteredListeners().length == 0) {
+-                            if (!ServerPlayer.this.level().kaiijuConfig.disableAchievements) // Kaiiju
+-                            CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack);
++                            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack); // Kaiiju
+                             return;
+                         }
+                         io.papermc.paper.event.player.PlayerInventorySlotChangeEvent event = new io.papermc.paper.event.player.PlayerInventorySlotChangeEvent(ServerPlayer.this.getBukkitEntity(), slotId, CraftItemStack.asBukkitCopy(oldStack), CraftItemStack.asBukkitCopy(stack));
+                         event.callEvent();
+                         if (event.shouldTriggerAdvancements()) {
+-                            if (!ServerPlayer.this.level().kaiijuConfig.disableAchievements) // Kaiiju
+-                            CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack);
++                            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.INVENTORY_CHANGED.trigger(ServerPlayer.this, ServerPlayer.this.getInventory(), stack); // Kaiiju
+                         }
+                     }
+                 }
+@@ -737,7 +734,7 @@ public class ServerPlayer extends Player {
+ 
+     @Override
+     protected void onInsideBlock(BlockState state) {
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.ENTER_BLOCK.trigger(this, state); // Kaiiju
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.ENTER_BLOCK.trigger(this, state); // Kaiiju
+     }
+ 
+     @Override
+@@ -785,9 +782,9 @@ public class ServerPlayer extends Player {
+             }
+         }
+ 
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.TICK.trigger(this); // Kaiiju
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.TICK.trigger(this); // Kaiiju
+         if (this.levitationStartPos != null) {
+-            if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.LEVITATION.trigger(this, this.levitationStartPos, this.tickCount - this.levitationStartTime); // Kaiiju
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.LEVITATION.trigger(this, this.levitationStartPos, this.tickCount - this.levitationStartTime); // Kaiiju
+         }
+ 
+         this.trackStartFallingPosition();
+@@ -861,8 +858,8 @@ public class ServerPlayer extends Player {
+                 this.connection.send(new ClientboundSetExperiencePacket(this.experienceProgress, this.totalExperience, this.experienceLevel));
+             }
+ 
+-            if (this.tickCount % 20 == 0) {
+-                if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.LOCATION.trigger(this); // Kaiiju
++            if (this.tickCount % 20 == 0 && dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) { // Kaiiju
++                CriteriaTriggers.LOCATION.trigger(this);
+             }
+ 
+             // CraftBukkit start - initialize oldLevel, fire PlayerLevelChangeEvent, and tick client-sided world border
+@@ -891,7 +888,7 @@ public class ServerPlayer extends Player {
+     @Override
+     public void resetFallDistance() {
+         if (this.getHealth() > 0.0F && this.startingToFallPosition != null) {
+-            if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.FALL_FROM_HEIGHT.trigger(this, this.startingToFallPosition); // Kaiiju
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.FALL_FROM_HEIGHT.trigger(this, this.startingToFallPosition); // Kaiiju
+         }
+ 
+         this.startingToFallPosition = null;
+@@ -910,7 +907,7 @@ public class ServerPlayer extends Player {
+             if (this.enteredLavaOnVehiclePosition == null) {
+                 this.enteredLavaOnVehiclePosition = this.position();
+             } else {
+-                if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.RIDE_ENTITY_IN_LAVA_TRIGGER.trigger(this, this.enteredLavaOnVehiclePosition); // Kaiiju
++                if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.RIDE_ENTITY_IN_LAVA_TRIGGER.trigger(this, this.enteredLavaOnVehiclePosition); // Kaiiju
+             }
+         }
+ 
+@@ -1114,7 +1111,7 @@ public class ServerPlayer extends Player {
+ 
+             this.handleTeamKill(s, s1, ObjectiveCriteria.TEAM_KILL);
+             this.handleTeamKill(s1, s, ObjectiveCriteria.KILLED_BY_TEAM);
+-            if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.PLAYER_KILLED_ENTITY.trigger(this, entityKilled, damageSource); // Kaiiju
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.PLAYER_KILLED_ENTITY.trigger(this, entityKilled, damageSource); // Kaiiju
+         }
+     }
+ 
+@@ -1232,7 +1229,7 @@ public class ServerPlayer extends Player {
+         this.wonGame = false;
+ 
+         this.respawn((player) -> {
+-            if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.CHANGED_DIMENSION.trigger(player, Level.END, Level.OVERWORLD); // Kaiiju
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.CHANGED_DIMENSION.trigger(player, Level.END, Level.OVERWORLD); // Kaiiju
+         }, true);
+     }
+ 
+@@ -1734,14 +1731,15 @@ public class ServerPlayer extends Player {
+             maindimensionkey1 = resourcekey1;
+         }
+         // Paper end
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.CHANGED_DIMENSION.trigger(this, maindimensionkey, maindimensionkey1); // Kaiiju
++
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.CHANGED_DIMENSION.trigger(this, maindimensionkey, maindimensionkey1); // Kaiiju
+         if (maindimensionkey != resourcekey || maindimensionkey1 != resourcekey1) {
+-            if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.CHANGED_DIMENSION.trigger(this, resourcekey, resourcekey1); // Kaiiju
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.CHANGED_DIMENSION.trigger(this, resourcekey, resourcekey1); // Kaiiju
+         }
+ 
+         if (maindimensionkey == Level.NETHER && maindimensionkey1 == Level.OVERWORLD && this.enteredNetherPosition != null) {
+             // CraftBukkit end
+-            if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.NETHER_TRAVEL.trigger(this, this.enteredNetherPosition); // Kaiiju
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.NETHER_TRAVEL.trigger(this, this.enteredNetherPosition); // Kaiiju
+         }
+ 
+         if (maindimensionkey1 != Level.NETHER) { // CraftBukkit
+@@ -1819,7 +1817,7 @@ public class ServerPlayer extends Player {
+                 {
+                     Either<Player.BedSleepingProblem, Unit> either = super.startSleepInBed(blockposition, force).ifRight((unit) -> {
+                         this.awardStat(Stats.SLEEP_IN_BED);
+-                        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.SLEPT_IN_BED.trigger(this); // Kaiiju
++                        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.SLEPT_IN_BED.trigger(this); // Kaiiju
+                     });
+ 
+                     if (!this.serverLevel().canSleepThroughNights()) {
+@@ -2119,7 +2117,7 @@ public class ServerPlayer extends Player {
+ 
+     @Override
+     public void triggerRecipeCrafted(Recipe<?> recipe, List<ItemStack> ingredients) {
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.RECIPE_CRAFTED.trigger(this, recipe.getId(), ingredients); // Kaiiju
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.RECIPE_CRAFTED.trigger(this, recipe.getId(), ingredients); // Kaiiju
+     }
+ 
+     @Override
+@@ -2248,14 +2246,14 @@ public class ServerPlayer extends Player {
+             this.levitationStartPos = this.position();
+         }
+ 
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.EFFECTS_CHANGED.trigger(this, source); // Kaiiju
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.EFFECTS_CHANGED.trigger(this, source); // Kaiiju
+     }
+ 
+     @Override
+     protected void onEffectUpdated(MobEffectInstance effect, boolean reapplyEffect, @Nullable Entity source) {
+         super.onEffectUpdated(effect, reapplyEffect, source);
+         this.connection.send(new ClientboundUpdateMobEffectPacket(this.getId(), effect));
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.EFFECTS_CHANGED.trigger(this, source); // Kaiiju
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.EFFECTS_CHANGED.trigger(this, source); // Kaiiju
+     }
+ 
+     @Override
+@@ -2266,7 +2264,7 @@ public class ServerPlayer extends Player {
+             this.levitationStartPos = null;
+         }
+ 
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.EFFECTS_CHANGED.trigger(this, (Entity) null); // Kaiiju
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.EFFECTS_CHANGED.trigger(this, (Entity) null); // Kaiiju
+     }
+ 
+     @Override
+@@ -2826,7 +2824,7 @@ public class ServerPlayer extends Player {
+ 
+     @Override
+     protected void updateUsingItem(ItemStack stack) {
+-        if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.USING_ITEM.trigger(this, stack); // Kaiiju
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.USING_ITEM.trigger(this, stack); // Kaiiju
+         super.updateUsingItem(stack);
+     }
+ 
+@@ -2855,7 +2853,7 @@ public class ServerPlayer extends Player {
+         Entity entity = item.getOwner();
+ 
+         if (entity != null) {
+-            if (!this.level().kaiijuConfig.disableAchievements) CriteriaTriggers.THROWN_ITEM_PICKED_UP_BY_PLAYER.trigger(this, item.getItem(), entity); // Kaiiju
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.THROWN_ITEM_PICKED_UP_BY_PLAYER.trigger(this, item.getItem(), entity); // Kaiiju
+         }
+ 
+     }
+diff --git a/src/main/java/net/minecraft/server/level/ServerPlayerGameMode.java b/src/main/java/net/minecraft/server/level/ServerPlayerGameMode.java
+index edfa7fbf209128b2254aa238e679f7be45162327..45a1b7f8ea300d6e6ddcda41dea999ffb5976edd 100644
+--- a/src/main/java/net/minecraft/server/level/ServerPlayerGameMode.java
++++ b/src/main/java/net/minecraft/server/level/ServerPlayerGameMode.java
+@@ -581,7 +581,7 @@ public class ServerPlayerGameMode {
+                 enuminteractionresult = iblockdata.use(world, player, hand, hitResult);
+ 
+                 if (enuminteractionresult.consumesAction()) {
+-                    CriteriaTriggers.ITEM_USED_ON_BLOCK.trigger(player, blockposition, itemstack1);
++                    if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.ITEM_USED_ON_BLOCK.trigger(player, blockposition, itemstack1); // Kaiiju
+                     return enuminteractionresult;
+                 }
+             }
+@@ -600,7 +600,7 @@ public class ServerPlayerGameMode {
+                 }
+ 
+                 if (enuminteractionresult1.consumesAction()) {
+-                    CriteriaTriggers.ITEM_USED_ON_BLOCK.trigger(player, blockposition, itemstack1);
++                    if (dev.kaiijumc.kaiiju.KaiijuConfig.disableAchievements == false) CriteriaTriggers.ITEM_USED_ON_BLOCK.trigger(player, blockposition, itemstack1); // Kaiiju
+                 }
+ 
+                 return enuminteractionresult1;
+diff --git a/src/main/java/net/minecraft/world/inventory/AbstractContainerMenu.java b/src/main/java/net/minecraft/world/inventory/AbstractContainerMenu.java
+index 706b354ac9a1a6a4a1e61b2a109180d1dd22bbbd..a71d576d6584b2870196f76be4dee6de4f5a0b03 100644
+--- a/src/main/java/net/minecraft/world/inventory/AbstractContainerMenu.java
++++ b/src/main/java/net/minecraft/world/inventory/AbstractContainerMenu.java
+@@ -186,12 +186,21 @@ public abstract class AbstractContainerMenu {
+         int i = 0;
+ 
+         int j;
++        // Kaiiju start
++        if (dev.kaiijumc.kaiiju.KaiijuConfig.skipHopefullyUnnecessaryNBTCopies) {
++            for (j = this.slots.size(); i < j; ++i) {
++                this.remoteSlots.set(i, ((Slot) this.slots.get(i)).getItem().slimCopy());
++            }
+ 
+-        for (j = this.slots.size(); i < j; ++i) {
+-            this.remoteSlots.set(i, ((Slot) this.slots.get(i)).getItem().copy());
+-        }
++            this.remoteCarried = this.getCarried().slimCopy();
++        } else {
++            for (j = this.slots.size(); i < j; ++i) {
++                this.remoteSlots.set(i, ((Slot) this.slots.get(i)).getItem().copy());
++            }
+ 
+-        this.remoteCarried = this.getCarried().copy();
++            this.remoteCarried = this.getCarried().copy();
++        }
++        // Kaiiju end
+         i = 0;
+ 
+         for (j = this.dataSlots.size(); i < j; ++i) {
+@@ -295,7 +304,8 @@ public abstract class AbstractContainerMenu {
+         ItemStack itemstack1 = (ItemStack) this.lastSlots.get(slot);
+ 
+         if (!ItemStack.matches(itemstack1, stack)) {
+-            ItemStack itemstack2 = (ItemStack) copySupplier.get();
++            ItemStack itemstack2 = stack.slimCopy(); // Kaiiju
++            if (!dev.kaiijumc.kaiiju.KaiijuConfig.skipHopefullyUnnecessaryNBTCopies) itemstack2 = (ItemStack) copySupplier.get(); // Kaiiju
+ 
+             this.lastSlots.set(slot, itemstack2);
+             Iterator iterator = this.containerListeners.iterator();
+@@ -314,7 +324,8 @@ public abstract class AbstractContainerMenu {
+             ItemStack itemstack1 = (ItemStack) this.remoteSlots.get(slot);
+ 
+             if (!ItemStack.matches(itemstack1, stack)) {
+-                ItemStack itemstack2 = (ItemStack) copySupplier.get();
++                ItemStack itemstack2 = stack.slimCopy(); // Kaiiju
++                if (!dev.kaiijumc.kaiiju.KaiijuConfig.skipHopefullyUnnecessaryNBTCopies) itemstack2 = (ItemStack) copySupplier.get(); // Kaiiju
+ 
+                 this.remoteSlots.set(slot, itemstack2);
+                 if (this.synchronizer != null) {
+diff --git a/src/main/java/net/minecraft/world/item/ItemStack.java b/src/main/java/net/minecraft/world/item/ItemStack.java
+index f341f8d1350ef3b1a9886b8ca6cffc3971fc290e..90da03a9b91fa27794140a9b72cba6de281a17ea 100644
+--- a/src/main/java/net/minecraft/world/item/ItemStack.java
++++ b/src/main/java/net/minecraft/world/item/ItemStack.java
+@@ -258,7 +258,8 @@ public final class ItemStack {
+         this.count = nbttagcompound.getByte("Count");
+         if (nbttagcompound.contains("tag", 10)) {
+             // CraftBukkit start - make defensive copy as this data may be coming from the save thread
+-            this.tag = nbttagcompound.getCompound("tag").copy();
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.skipHopefullyUnnecessaryNBTCopies) this.tag = nbttagcompound.getCompound("tag"); // Kaiiju
++            else this.tag = nbttagcompound.getCompound("tag").copy();
+             // CraftBukkit end
+             this.processEnchantOrder(this.tag); // Paper
+             this.processText(); // Paper
+@@ -553,7 +554,8 @@ public final class ItemStack {
+         nbt.putString("id", minecraftkey == null ? "minecraft:air" : minecraftkey.toString());
+         nbt.putByte("Count", (byte) this.count);
+         if (this.tag != null) {
+-            nbt.put("tag", this.tag.copy());
++            if (dev.kaiijumc.kaiiju.KaiijuConfig.skipHopefullyUnnecessaryNBTCopies) nbt.put("tag", this.tag); // Kaiiju
++            else nbt.put("tag", this.tag.copy()); // Kaiiju
+         }
+ 
+         return nbt;
+@@ -740,6 +742,14 @@ public final class ItemStack {
+         }
+     }
+ 
++    // Kaiiju start
++    public ItemStack slimCopy() {
++        ItemStack copy = new ItemStack(this.item, this.count);
++        copy.tag = this.tag;
++        return copy;
++    }
++    // Kaiiju end
++
+     public ItemStack copyWithCount(int count) {
+         if (this.isEmpty()) {
+             return ItemStack.EMPTY;
+@@ -824,6 +834,70 @@ public final class ItemStack {
+         return this.tag;
+     }
+ 
++    // Kaiiju start
++    public CompoundTag getTagSlim() {
++        if (this.tag == null) return new CompoundTag();
++        if (this.getItem() instanceof net.minecraft.world.item.BundleItem) return new CompoundTag();
++        CompoundTag slimTag = this.tag.copy();
++        CompoundTag blockEntityTag = slimTag.getCompound("BlockEntityTag");
++        ListTag items = blockEntityTag.getList("Items", 10);
++
++        for (int i = 0; i < items.size(); i++) {
++            CompoundTag item = items.getCompound(i);
++            String id = item.getString("id");
++            if (id.startsWith("minecraft:")) {
++                String type = id.substring(10);
++                if (type.endsWith("_sword") || type.endsWith("_pickaxe") || type.endsWith("_axe") ||
++                    type.endsWith("_shovel") || type.endsWith("_hoe") || type.endsWith("_helmet") ||
++                    type.endsWith("_chestplate") || type.endsWith("_leggings") || type.endsWith("_boots")) {
++                        handleItem(item);
++                } else if (type.equals("written_book") || type.equals("writable_book")) {
++                    handleBook(item);
++                } else if (type.equals("bundle")) {
++                    handleBundle(item);
++                } else if (type.equals("bee_nest") || type.equals("beehive")) {
++                    item = new CompoundTag();
++                }
++            }
++            items.set(i, item);
++        }
++
++        // System.out.println("Final: " + slimTag);
++        return slimTag;
++    }
++
++    private void handleBundle(CompoundTag item) {
++        CompoundTag tag = item.getCompound("tag");
++        if (tag.contains("Items", 9)) {
++            tag.remove("Items");
++        }
++    }
++
++    private void handleItem(CompoundTag item) {
++        CompoundTag tag = item.getCompound("tag");
++        if (tag.contains("Enchantments", 9)) {
++            ListTag enchantments = tag.getList("Enchantments", 10);
++            if (enchantments.size() > 1) {
++                ListTag slimEnchantments = new ListTag();
++                slimEnchantments.add(enchantments.get(0));
++                tag.put("Enchantments", slimEnchantments);
++            }
++        }
++    }
++
++    private void handleBook(CompoundTag item) {
++        CompoundTag tag = item.getCompound("tag");
++        if (tag.contains("pages", 9)) {
++            ListTag pages = tag.getList("pages", 8);
++            if (pages.size() > 1) {
++                ListTag slimPages = new ListTag();
++                slimPages.add(pages.get(0));
++                tag.put("pages", slimPages);
++            }
++        }
++    }
++    // Kaiiju end
++
+     // CraftBukkit start
+     @Nullable
+     private CompoundTag getTagClone() {
